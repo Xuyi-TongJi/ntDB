@@ -37,7 +37,7 @@ type TransactionManagerImpl struct {
 	xidCounter int64 // xid计数
 }
 
-func NewTransactionManagerImpl(path string) *TransactionManagerImpl {
+func NewTransactionManagerImpl(path string) TransactionManager {
 	file, err := os.OpenFile(path, os.O_RDWR, 0666)
 	if err != nil {
 		panic(err)
