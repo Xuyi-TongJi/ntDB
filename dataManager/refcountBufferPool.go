@@ -1,8 +1,6 @@
 package dataManager
 
 import (
-	. "myDB/dataManager"
-	. "myDB/dataSource"
 	"sync"
 	"time"
 )

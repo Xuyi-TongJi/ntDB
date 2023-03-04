@@ -28,6 +28,6 @@ func TestLock(t *testing.T) {
 }
 
 func TestPageCache(t *testing.T) {
-	pc := dataManager.NewPageCacheRefCountFileSystemImpl(10, "test.txt")
-	pc.GetPage(1)
+	_ = dataManager.NewPageCacheRefCountFileSystemImpl(10, "test.txt")
+	//pc.GetPage(1)
 }

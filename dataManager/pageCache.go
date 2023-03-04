@@ -2,8 +2,6 @@ package dataManager
 
 import (
 	"fmt"
-	. "myDB/bufferPool"
-	. "myDB/dataSource"
 	"sync"
 	"sync/atomic"
 )
