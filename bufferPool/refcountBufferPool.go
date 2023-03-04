@@ -1,33 +1,36 @@
-package bufferPool
+package dataManager
 
 import (
-	"log"
-	"sync"
+	. "myDB/dataManager"
+	. "myDB/dataSource"
 	"time"
 )
 
 // RefCountBufferPoolImpl 基于RefCount 实现BufferPool
 type RefCountBufferPoolImpl struct {
-	cache       map[int64]any
+	cache       map[int64]PoolObj
 	refCount    map[int64]uint32
 	caching     map[int64]struct{} // 正在进行IO请求的key
 	maxRecourse uint32             // bufferPool最大支持的缓存cacheId个数
 	count       uint32             // 目前内存中的cacheId个数
-	lock        sync.Mutex
+	ds          DataSource
+	//lock sync.Mutex
 }
 
-func NewRefCountBufferPoolImpl(maxRecourse uint32) BufferPool {
+func NewRefCountBufferPool(maxRecourse uint32, ds DataSource) BufferPool {
 	return &RefCountBufferPoolImpl{
-		cache:       map[int64]any{},
+		cache:       map[int64]PoolObj{},
 		refCount:    map[int64]uint32{},
 		caching:     map[int64]struct{}{},
 		maxRecourse: maxRecourse,
 		count:       0,
+		ds:          ds,
 	}
 }
 
-func (p *RefCountBufferPoolImpl) Get(key int64) (any, error) {
-	p.lock.Lock()
+func (p *RefCountBufferPoolImpl) Get(obj PoolObj) (PoolObj, error) {
+	//p.lock.Lock()
+	key := obj.GetId()
 	for true {
 		if _, ext := p.caching[key]; ext {
 			time.Sleep(10 * time.Millisecond)
@@ -36,51 +39,53 @@ func (p *RefCountBufferPoolImpl) Get(key int64) (any, error) {
 		// already in cache
 		if obj, ext := p.cache[key]; ext {
 			p.refCount[key] += 1
-			p.lock.Unlock()
+			//p.lock.Unlock()
 			return obj, nil
 		} else {
 			break
 		}
 	}
-	// before ask for I/O request
+	// before ask for data source
 	if p.count+1 > p.maxRecourse {
-		p.lock.Unlock()
+		//p.lock.Unlock()
 		panic("Buffer pool out of memory\n")
 	}
 	p.count += 1
 	p.caching[key] = struct{}{}
-	p.lock.Unlock()
-	// ask for I/O request
-	obj, err := p.getToCache(key)
+	//p.lock.Unlock()
+	// get from datasource
+	data, err := p.ds.GetFromDataSource(obj)
 	if err != nil {
-		p.lock.Lock()
+		//p.lock.Lock()
 		p.count -= 1
 		delete(p.caching, key)
-		p.lock.Unlock()
+		//p.lock.Unlock()
 		return nil, err
 	}
 	// put to cache
-	p.lock.Lock()
+	//p.lock.Lock()
 	delete(p.caching, key)
 	p.refCount[key] += 1
+	obj.SetData(data)
 	p.cache[key] = obj
-	//fmt.Printf("obj-->%d, refCount-->%d\n", obj.(int64), p.refCount[key])
-	p.lock.Unlock()
+	//p.lock.Unlock()
 	return obj, nil
 }
 
-func (p *RefCountBufferPoolImpl) Release(key int64) error {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+func (p *RefCountBufferPoolImpl) Release(obj PoolObj) error {
+	//p.lock.Lock()
+	//defer p.lock.Unlock()
+	key := obj.GetId()
 	count, ext := p.refCount[key]
 	if !ext {
 		panic("Try to release a key which is not in buffer pool\n")
 	}
 	count -= 1
 	if count == 0 {
-		obj := p.cache[key]
-		if err := p.releaseFromCache(obj); err != nil {
-			return err
+		if obj.IsDirty() {
+			if err := p.ds.FlushBackToDataSource(obj); err != nil {
+				return err
+			}
 		}
 		delete(p.refCount, key)
 		delete(p.cache, key)
@@ -93,11 +98,13 @@ func (p *RefCountBufferPoolImpl) Release(key int64) error {
 
 // Close shut up the buffer pool safely
 func (p *RefCountBufferPoolImpl) Close() error {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	//p.lock.Lock()
+	//defer p.lock.Unlock()
 	for key, obj := range p.cache {
-		if err := p.releaseFromCache(obj); err != nil {
-			return err
+		if obj.IsDirty() {
+			if err := p.ds.FlushBackToDataSource(obj); err != nil {
+				return err
+			}
 		}
 		delete(p.cache, key)
 		delete(p.refCount, key)
@@ -106,25 +113,14 @@ func (p *RefCountBufferPoolImpl) Close() error {
 	return nil
 }
 
-// 引用计数将为0时，执行回写数据的逻辑
-func (p *RefCountBufferPoolImpl) releaseFromCache(obj any) error {
-	return nil
-}
-
-// 缓存未命中时，发起IO请求读入缓存
-func (p *RefCountBufferPoolImpl) getToCache(key int64) (any, error) {
-	// TODO
-	return key, nil
-}
-
 // Debug only for debug
 func (p *RefCountBufferPoolImpl) Debug() {
-	log.Println("Ref count cache")
+	/*log.Println("Ref count cache")
 	for k, v := range p.refCount {
 		log.Printf("%d, %d\n", k, v)
 	}
 	log.Println("Cache")
 	for k, v := range p.cache {
-		log.Printf("%d, %d\n", k, v.(int64))
-	}
+		//log.Printf("%d, %d\n", k, v.(int64))
+	}*/
 }

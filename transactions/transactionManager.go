@@ -124,7 +124,9 @@ func (t *TransactionManagerImpl) Status(xid int64) byte {
 }
 
 func (t *TransactionManagerImpl) close() {
-	_ = t.file.Close()
+	if err := t.file.Close(); err != nil {
+		panic(err)
+	}
 }
 
 func (t *TransactionManagerImpl) initXidFile() {
