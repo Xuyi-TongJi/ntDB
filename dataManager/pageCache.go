@@ -28,8 +28,8 @@ type PageCache interface {
 type PageCacheImpl struct {
 	// implemented by PageCache
 	pool        BufferPool
-	ds          DataSource   // only used for NewPage->doFlush method
-	lock        sync.Mutex   // protect the NewPage/GetPage/ReleasePage
+	ds          DataSource   // only used for NewPage-> doFlush method
+	lock        sync.Mutex   // protect the NewPage/ GetPage/ ReleasePage, the only global lock of the page cache system
 	pageNumbers atomic.Int64 // the total page numbers in the currentFile
 }
 
@@ -46,7 +46,7 @@ func (p *PageCacheImpl) Close() error {
 func (p *PageCacheImpl) NewPage(data []byte) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	newPage := p.NewPageByDsType(p.ds, p.pageNumbers.Load()+1)
+	newPage := p.newPageByDsType(p.ds, p.pageNumbers.Load()+1)
 	newPage.SetData(data)
 	p.doFlush(newPage)
 	p.pageNumbers.Add(1)
@@ -54,12 +54,14 @@ func (p *PageCacheImpl) NewPage(data []byte) int64 {
 }
 
 // GetPage 缓存未命中时的页面获取策略
+// 并发安全由BufferPool实现
 // 将数据源中的数据封装成Page
 func (p *PageCacheImpl) GetPage(pageId int64) (Page, error) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	if !p.checkKeyValid(pageId) {
+		panic("Invalid page id\n")
+	}
 	// 组装空Page
-	page := p.NewPageByDsType(p.ds, pageId)
+	page := p.newPageByDsType(p.ds, pageId)
 	if result, err := p.pool.Get(page); err != nil {
 		return nil, err
 	} else {
@@ -74,11 +76,16 @@ func (p *PageCacheImpl) ReleasePage(page Page) error {
 	return p.pool.Release(page)
 }
 
-// Truncate 清空文件, 并预留maxPageNumbers个页的空间
+// TruncateDataSource 清空文件, 并预留maxPageNumbers个页的空间
+// if ds doesn't support Truncation, then panic
 func (p *PageCacheImpl) TruncateDataSource(maxPageNumbers int64) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.ds.Truncate(maxPageNumbers * PageSize)
+	if err := p.ds.Truncate(maxPageNumbers * PageSize); err != nil {
+		return err
+	}
+	p.pageNumbers.Add(maxPageNumbers)
+	return nil
 }
 
 func (p *PageCacheImpl) GetPageNumbers() int64 {
@@ -91,7 +98,7 @@ func (p *PageCacheImpl) getPageOffset(pageId int64) int64 {
 }
 
 func (p *PageCacheImpl) checkKeyValid(pageId int64) bool {
-	return pageId <= p.pageNumbers.Load()
+	return pageId <= p.pageNumbers.Load() && pageId > 0
 }
 
 // doFlush
@@ -109,7 +116,7 @@ func (p *PageCacheImpl) doFlush(page Page) {
 
 // NewPageByDsType
 // extensible
-func (p *PageCacheImpl) NewPageByDsType(source DataSource, pageId int64) Page {
+func (p *PageCacheImpl) newPageByDsType(source DataSource, pageId int64) Page {
 	switch source.(type) {
 	case *FileSystemDataSource:
 		return &PageFileSystemImpl{
@@ -123,11 +130,11 @@ func (p *PageCacheImpl) NewPageByDsType(source DataSource, pageId int64) Page {
 }
 
 func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string) PageCache {
-	ch := NewFileSystemCacheHandler(path)
+	ds := MewFileSystemDataSource(path)
 	this := &PageCacheImpl{
-		ds: ch,
+		ds: ds,
 	}
-	bufferPool := NewRefCountBufferPool(maxRecourse, ch)
+	bufferPool := NewRefCountBufferPool(maxRecourse, ds, &this.lock)
 	this.pool = bufferPool
 	return this
 }

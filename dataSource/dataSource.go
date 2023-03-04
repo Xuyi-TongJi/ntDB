@@ -23,7 +23,7 @@ type FileSystemObj interface {
 	GetOffset() int64
 }
 
-func NewFileSystemCacheHandler(path string) DataSource {
+func MewFileSystemDataSource(path string) DataSource {
 	f, err := os.OpenFile(path, os.O_RDWR, 0666)
 	if err != nil {
 		panic(err)

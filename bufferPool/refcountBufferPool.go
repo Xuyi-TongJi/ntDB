@@ -3,6 +3,7 @@ package dataManager
 import (
 	. "myDB/dataManager"
 	. "myDB/dataSource"
+	"sync"
 	"time"
 )
 
@@ -14,10 +15,10 @@ type RefCountBufferPoolImpl struct {
 	maxRecourse uint32             // bufferPool最大支持的缓存cacheId个数
 	count       uint32             // 目前内存中的cacheId个数
 	ds          DataSource
-	//lock sync.Mutex
+	lock        *sync.Mutex // 与PageCache共用一把锁
 }
 
-func NewRefCountBufferPool(maxRecourse uint32, ds DataSource) BufferPool {
+func NewRefCountBufferPool(maxRecourse uint32, ds DataSource, lock *sync.Mutex) BufferPool {
 	return &RefCountBufferPoolImpl{
 		cache:       map[int64]PoolObj{},
 		refCount:    map[int64]uint32{},
@@ -25,11 +26,12 @@ func NewRefCountBufferPool(maxRecourse uint32, ds DataSource) BufferPool {
 		maxRecourse: maxRecourse,
 		count:       0,
 		ds:          ds,
+		lock:        lock,
 	}
 }
 
 func (p *RefCountBufferPoolImpl) Get(obj PoolObj) (PoolObj, error) {
-	//p.lock.Lock()
+	p.lock.Lock()
 	key := obj.GetId()
 	for true {
 		if _, ext := p.caching[key]; ext {
@@ -39,7 +41,7 @@ func (p *RefCountBufferPoolImpl) Get(obj PoolObj) (PoolObj, error) {
 		// already in cache
 		if obj, ext := p.cache[key]; ext {
 			p.refCount[key] += 1
-			//p.lock.Unlock()
+			p.lock.Unlock()
 			return obj, nil
 		} else {
 			break
@@ -52,29 +54,27 @@ func (p *RefCountBufferPoolImpl) Get(obj PoolObj) (PoolObj, error) {
 	}
 	p.count += 1
 	p.caching[key] = struct{}{}
-	//p.lock.Unlock()
+	p.lock.Unlock()
 	// get from datasource
 	data, err := p.ds.GetFromDataSource(obj)
 	if err != nil {
-		//p.lock.Lock()
+		p.lock.Lock()
 		p.count -= 1
 		delete(p.caching, key)
-		//p.lock.Unlock()
+		p.lock.Unlock()
 		return nil, err
 	}
 	// put to cache
-	//p.lock.Lock()
+	p.lock.Lock()
 	delete(p.caching, key)
 	p.refCount[key] += 1
 	obj.SetData(data)
 	p.cache[key] = obj
-	//p.lock.Unlock()
+	p.lock.Unlock()
 	return obj, nil
 }
 
 func (p *RefCountBufferPoolImpl) Release(obj PoolObj) error {
-	//p.lock.Lock()
-	//defer p.lock.Unlock()
 	key := obj.GetId()
 	count, ext := p.refCount[key]
 	if !ext {
@@ -98,8 +98,6 @@ func (p *RefCountBufferPoolImpl) Release(obj PoolObj) error {
 
 // Close shut up the buffer pool safely
 func (p *RefCountBufferPoolImpl) Close() error {
-	//p.lock.Lock()
-	//defer p.lock.Unlock()
 	for key, obj := range p.cache {
 		if obj.IsDirty() {
 			if err := p.ds.FlushBackToDataSource(obj); err != nil {
