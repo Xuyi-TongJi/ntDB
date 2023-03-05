@@ -1,6 +1,21 @@
 package dataManager
 
-// LRU TODO 基于LRU实现BufferPool
+// Lru TODO 基于LRU实现BufferPool
 
-type LRU struct {
+type LruBufferPool struct {
+}
+
+func (l *LruBufferPool) Get(key PoolObj) (PoolObj, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (l *LruBufferPool) Release(key PoolObj) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (l *LruBufferPool) Close() error {
+	//TODO implement me
+	panic("implement me")
 }

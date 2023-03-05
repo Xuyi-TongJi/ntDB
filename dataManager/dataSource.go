@@ -2,6 +2,7 @@ package dataManager
 
 import (
 	"os"
+	"sync"
 )
 
 type DataSource interface {
@@ -15,6 +16,7 @@ type DataSource interface {
 
 type FileSystemDataSource struct {
 	file *os.File
+	lock *sync.Mutex
 }
 
 type FileSystemObj interface {
@@ -22,7 +24,7 @@ type FileSystemObj interface {
 	GetOffset() int64
 }
 
-func MewFileSystemDataSource(path string) DataSource {
+func NewFileSystemDataSource(path string, lock *sync.Mutex) DataSource {
 	f, err := os.OpenFile(path, os.O_RDWR, 0666)
 	if err != nil {
 		panic(err)

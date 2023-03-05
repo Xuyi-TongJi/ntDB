@@ -128,10 +128,9 @@ func (p *PageCacheImpl) newPageByDsType(source DataSource, pageId int64) Page {
 }
 
 func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string) PageCache {
-	ds := MewFileSystemDataSource(path)
-	this := &PageCacheImpl{
-		ds: ds,
-	}
+	this := &PageCacheImpl{}
+	ds := NewFileSystemDataSource(path, &this.lock)
+	this.ds = ds
 	bufferPool := NewRefCountBufferPool(maxRecourse, ds, &this.lock)
 	this.pool = bufferPool
 	return this
