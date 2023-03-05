@@ -13,22 +13,21 @@ const (
 	ACTIVE          byte   = 0
 	COMMITTED       byte   = 1
 	ABORTED         byte   = 2
-	INVALID         byte   = 3
 	SuperXID        int64  = 0      // 超级事物的xid为0，其永远为提交状态
 	XidFileSuffix   string = ".xid" // xid文件后缀
 	XidStatusSize   int64  = 1      // 每个事物用1个字节(byte)记录
 	XidHeaderLength int64  = 8      // 首8个字节用于记录事物的总数
 )
 
-// TransactionManager
+// TransactionManager 事物状态管理器
 // 记录各个事物的状态
 // XID文件为每个事物分配了1字节的空间,用来记录事物的状态
 // XID文件的首8个字节用于记录事物的总数
 type TransactionManager interface {
 	Begin() int64
-	Commit(xid int64) error
-	Abort(xid int64) error
-	Status(xid int64) (byte, error)
+	Commit(xid int64)
+	Abort(xid int64)
+	Status(xid int64) byte
 	close()
 }
 
@@ -38,15 +37,8 @@ type TransactionManagerImpl struct {
 	xidCounter int64 // xid计数
 }
 
-type ErrorInvalidXid struct {
-}
-
-func (e *ErrorInvalidXid) Error() string {
-	return "Invalid XID"
-}
-
-func NewTransactionManagerImpl(path string) *TransactionManagerImpl {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0666)
+func NewTransactionManagerImpl(path string) TransactionManager {
+	file, err := os.OpenFile(path, os.O_RDWR, 0666)
 	if err != nil {
 		panic(err)
 	}
@@ -95,30 +87,46 @@ func (t *TransactionManagerImpl) Begin() int64 {
 	return t.xidCounter
 }
 
-func (t *TransactionManagerImpl) Commit(xid int64) error {
-	//TODO implement me
-	panic("implement me")
+func (t *TransactionManagerImpl) Commit(xid int64) {
+	if xid == SuperXID {
+		return
+	}
+	if xid > t.xidCounter {
+		panic("Invalid Xid\n")
+	}
+	// update status
+	t.updateXidStatus(xid, COMMITTED)
 }
 
-func (t *TransactionManagerImpl) Abort(xid int64) error {
-	//TODO implement me
-	panic("implement me")
+func (t *TransactionManagerImpl) Abort(xid int64) {
+	if xid == SuperXID {
+		return
+	}
+	if xid > t.xidCounter {
+		panic("Invalid Xid\n")
+	}
+	t.updateXidStatus(xid, ABORTED)
 }
 
-func (t *TransactionManagerImpl) Status(xid int64) (byte, error) {
-	if xid >= t.xidCounter {
-		return INVALID, &ErrorInvalidXid{}
+func (t *TransactionManagerImpl) Status(xid int64) byte {
+	if xid == SuperXID {
+		return COMMITTED
+	}
+	if xid > t.xidCounter {
+		panic("Invalid Xid\n")
 	}
 	offset := t.getXidOffset(xid)
 	buf := make([]byte, XidStatusSize)
 	if _, err := t.file.ReadAt(buf, offset); err != nil {
 		panic(err)
 	}
-	return buf[0], nil
+	return buf[0]
 }
 
 func (t *TransactionManagerImpl) close() {
-	_ = t.file.Close()
+	if err := t.file.Close(); err != nil {
+		panic(err)
+	}
 }
 
 func (t *TransactionManagerImpl) initXidFile() {
@@ -157,3 +165,10 @@ func (t *TransactionManagerImpl) increaseXidCounter() {
 		panic(err)
 	}
 }
+
+/*//  Debug only for unit test
+func (t *TransactionManagerImpl) Debug() os.FileInfo {
+	stat, _ := t.file.Stat()
+	return stat
+}
+*/
