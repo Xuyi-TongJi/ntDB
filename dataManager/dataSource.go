@@ -1,6 +1,7 @@
 package dataManager
 
 import (
+	"fmt"
 	"os"
 	"sync"
 )
@@ -31,6 +32,7 @@ func NewFileSystemDataSource(path string, lock *sync.Mutex) DataSource {
 	}
 	return &FileSystemDataSource{
 		file: f,
+		lock: lock,
 	}
 }
 
@@ -70,4 +72,10 @@ func (ch *FileSystemDataSource) Truncate(size int64) error {
 
 func (ch *FileSystemDataSource) Close() error {
 	return ch.file.Close()
+}
+
+// Debug only for debugging
+func (ch *FileSystemDataSource) Debug() {
+	stat, _ := ch.file.Stat()
+	fmt.Println(stat.Size())
 }

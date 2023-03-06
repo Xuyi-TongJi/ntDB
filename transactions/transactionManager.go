@@ -3,6 +3,7 @@ package transactions
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"sync"
 )
@@ -38,8 +39,14 @@ type TransactionManagerImpl struct {
 }
 
 func NewTransactionManagerImpl(path string) TransactionManager {
-	file, err := os.OpenFile(path, os.O_RDWR, 0666)
-	if err != nil {
+	var file *os.File
+	file, err := os.OpenFile(path+XidFileSuffix, os.O_RDWR, 0666)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		file, err = os.Create(path + XidFileSuffix)
+		if err != nil {
+			panic(err)
+		}
+	} else if err != nil {
 		panic(err)
 	}
 	t := &TransactionManagerImpl{

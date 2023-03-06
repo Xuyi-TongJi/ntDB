@@ -1,7 +1,18 @@
 package main
 
-import "fmt"
+type I interface {
+	boo()
+}
+
+type A struct {
+	a int
+}
+
+func (a A) boo() {}
+
+func NewI() I {
+	return A{}
+}
 
 func main() {
-	fmt.Println(1 << 16)
 }

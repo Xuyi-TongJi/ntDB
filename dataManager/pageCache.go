@@ -6,6 +6,14 @@ import (
 	"sync/atomic"
 )
 
+var (
+	defaultPageFactory pageFactory
+)
+
+func init() {
+	defaultPageFactory = pageFactoryImpl{}
+}
+
 // PageCache
 // 基于页面Page的缓存接口
 
@@ -21,7 +29,7 @@ type PageCache interface {
 // Implementation
 // PageCache实现类
 // 实现PageCache接口
-// 组合模式
+// 桥接模式
 
 type PageCacheImpl struct {
 	// implemented by PageCache
@@ -44,10 +52,20 @@ func (p *PageCacheImpl) Close() error {
 func (p *PageCacheImpl) NewPage(data []byte) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	newPage := p.newPageByDsType(p.ds, p.pageNumbers.Load()+1)
-	newPage.SetData(data)
-	p.doFlush(newPage)
+	if int64(len(data)) > PageSize {
+		panic("Data length overflow when creating a new page")
+	}
+	var dt []byte
+	if int64(len(data)) < PageSize {
+		dt = make([]byte, PageSize)
+		copy(dt[:len(data)], data)
+	} else {
+		dt = data
+	}
+	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p)
+	newPage.SetData(dt)
 	p.pageNumbers.Add(1)
+	p.doFlush(newPage)
 	return p.pageNumbers.Load()
 }
 
@@ -59,7 +77,7 @@ func (p *PageCacheImpl) GetPage(pageId int64) (Page, error) {
 		panic("Invalid page id\n")
 	}
 	// 组装空Page
-	page := p.newPageByDsType(p.ds, pageId)
+	page := defaultPageFactory.newPage(p.ds, pageId, p)
 	if result, err := p.pool.Get(page); err != nil {
 		return nil, err
 	} else {
@@ -112,15 +130,21 @@ func (p *PageCacheImpl) doFlush(page Page) {
 	}
 }
 
-// NewPageByDsType
+// Page Factory
+
+type pageFactory interface {
+	newPage(ds DataSource, pageId int64, pc PageCache) Page
+}
+
+type pageFactoryImpl struct{}
+
+// 工厂方法
 // extensible
-func (p *PageCacheImpl) newPageByDsType(source DataSource, pageId int64) Page {
-	switch source.(type) {
+func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache) Page {
+	switch ds.(type) {
 	case *FileSystemDataSource:
-		return &PageFileSystemImpl{
-			pageId: pageId,
-			dirty:  false,
-			pc:     p,
+		return &PageImpl{
+			pageId: pageId, dirty: false, pc: pc,
 		}
 	default:
 		panic("Invalid dataSource type\n")
