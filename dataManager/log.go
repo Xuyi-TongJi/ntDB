@@ -43,7 +43,13 @@ func (log *RedoLog) Log(data []byte) {
 	if _, err := log.file.WriteAt(logWrap, stat.Size()); err != nil {
 		panic(err)
 	}
-
+	// finally update the checkSum
+	nextCheckSum := calcCheckSum(int(log.checkSum), data)
+	buffer := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer, binary.BigEndian, nextCheckSum)
+	if _, err := log.file.WriteAt(buffer.Bytes(), 0); err != nil {
+		panic(err)
+	}
 }
 
 func (log *RedoLog) Close() {
