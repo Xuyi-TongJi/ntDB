@@ -44,7 +44,7 @@ func TestPageCache(t *testing.T) {
 
 func TestFile(t *testing.T) {
 	file, _ := os.OpenFile("test.txt", os.O_RDWR, 0666)
-	file.Write([]byte("hello world"))
+	_, _ = file.Write([]byte("hello world"))
 	//file.Truncate(5)
 	buf := make([]byte, 10)
 	bb := make([]byte, 5)

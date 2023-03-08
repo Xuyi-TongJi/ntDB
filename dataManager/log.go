@@ -5,18 +5,26 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
+	. "myDB/transactions"
 	"os"
 	"sync"
 )
 
 // 日志系统实现
 // 迭代器模式
+// 所有操作必须先记录日志（保证刷入磁盘后），再执行数据操作
+// Any error will panic
 
 type Log interface {
 	Log(data []byte) // 记录下一条log
 	Close()
 	Next() []byte // 迭代器获得下一条log data
 	Reset()       // 重置迭代器指针
+}
+
+type Redo interface {
+	CrashRecover()
 }
 
 const (
@@ -34,137 +42,235 @@ type RedoLog struct {
 	offset   int64 // current pointer used for iterator
 }
 
-func (log *RedoLog) Log(data []byte) {
-	log.lock.Lock()
-	defer log.lock.Unlock()
-	logWrap := log.wrapLog(data)
+// Log
+// [Size]4[CheckSum]8[Data] -> log raw format
+// Must flush the wrapped data and then update the checkSum of the redo log file
+func (redo *RedoLog) Log(data []byte) {
+	redo.lock.Lock()
+	defer redo.lock.Unlock()
+	logWrap := wrapLog(data)
 	// write
-	stat, _ := log.file.Stat()
-	if _, err := log.file.WriteAt(logWrap, stat.Size()); err != nil {
+	stat, _ := redo.file.Stat()
+	if _, err := redo.file.WriteAt(logWrap, stat.Size()); err != nil {
 		panic(err)
 	}
 	// finally update the checkSum
-	nextCheckSum := calcCheckSum(int(log.checkSum), data)
+	nextCheckSum := calcCheckSum(int(redo.checkSum), data)
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, nextCheckSum)
-	if _, err := log.file.WriteAt(buffer.Bytes(), 0); err != nil {
+	if _, err := redo.file.WriteAt(buffer.Bytes(), 0); err != nil {
 		panic(err)
 	}
 }
 
-func (log *RedoLog) Close() {
-	log.lock.Lock()
-	defer log.lock.Unlock()
-	if err := log.file.Close(); err != nil {
+func (redo *RedoLog) Close() {
+	redo.lock.Lock()
+	defer redo.lock.Unlock()
+	if err := redo.file.Close(); err != nil {
 		panic(err)
 	}
 }
 
 // Next 迭代器模式
 // nextUnlock 的加锁实现
-func (log *RedoLog) Next() []byte {
-	log.lock.Lock()
-	defer log.lock.Unlock()
-	return log.nextUnlock()
+func (redo *RedoLog) Next() []byte {
+	redo.lock.Lock()
+	defer redo.lock.Unlock()
+	return redo.nextUnlock()
 }
 
-func (log *RedoLog) Reset() {
-	log.offset = SzCheckSum
+func (redo *RedoLog) Reset() {
+	redo.offset = SzCheckSum
 }
 
 // init
 // 根据redoLog文件恢复现场参数(offset, checkSum)
-func (log *RedoLog) init() {
+func (redo *RedoLog) init() {
 	// read checkSum
-	stat, _ := log.file.Stat()
+	stat, _ := redo.file.Stat()
 	if stat.Size() < SzCheckSum {
 		panic("Invalid checkSum length when initializing redo log\n")
 	}
 	buf := make([]byte, SzCheckSum)
-	if _, err := log.file.ReadAt(buf, 0); err != nil {
+	if _, err := redo.file.ReadAt(buf, 0); err != nil {
 		panic(fmt.Sprintf("Error occuring when initializing redo log, %s\n", err))
 	}
-	log.checkSum = int32(binary.BigEndian.Uint32(buf))
-	log.removeTail() // set offset
+	redo.checkSum = int32(binary.BigEndian.Uint32(buf))
+	redo.removeTail() // set offset
 }
 
 // removeTail
 // 移除log中上次关闭未写完的部分
 // only in init method
-func (log *RedoLog) removeTail() {
-	log.Reset()
+func (redo *RedoLog) removeTail() {
+	redo.Reset()
 	var checkedCheckSum int32 = 0
 	for true {
-		nextLogData := log.nextUnlock()
+		nextLogData := redo.nextUnlock()
 		if nextLogData == nil {
 			break
 		}
 		checkedCheckSum = calcCheckSum(int(checkedCheckSum), nextLogData)
 	}
-	if checkedCheckSum != log.checkSum {
+	if checkedCheckSum != redo.checkSum {
 		panic("Invalid redo log file\n")
 	}
 	// truncate
-	log.truncate(log.offset)
-	log.Reset() // roll back the pointer
+	redo.truncate(redo.offset)
+	redo.Reset() // roll back the pointer
 }
 
 // truncate 截断文件
-func (log *RedoLog) truncate(size int64) {
-	if err := log.file.Truncate(size); err != nil {
+func (redo *RedoLog) truncate(size int64) {
+	if err := redo.file.Truncate(size); err != nil {
 		panic(err)
 	}
 }
 
 // nextUnlock
-// 仅适用于 removeTail 方法
+// 仅适用于 removeTail / CrashRecover 方法
 // return the data of next log
 // if !hasNext or the next log is invalid then return nil
-func (log *RedoLog) nextUnlock() (data []byte) {
+func (redo *RedoLog) nextUnlock() (data []byte) {
 	// next log is invalid
-	stat, _ := log.file.Stat()
+	stat, _ := redo.file.Stat()
 	totSize := stat.Size()
-	if log.offset+SzData+SzCheckSum > totSize {
+	if redo.offset+SzData+SzCheckSum > totSize {
 		return nil
 	}
 	buffer := make([]byte, SzData)
-	if _, err := log.file.ReadAt(buffer, log.offset); err != nil {
+	if _, err := redo.file.ReadAt(buffer, redo.offset); err != nil {
 		panic(err)
 	}
 	dataSize := int64(binary.BigEndian.Uint32(buffer))
-	if log.offset+SzData+SzCheckSum+dataSize > totSize {
+	if redo.offset+SzData+SzCheckSum+dataSize > totSize {
 		return nil
 	}
 	data = make([]byte, dataSize)
-	if _, err := log.file.ReadAt(data, log.offset+SzData+SzCheckSum); err != nil {
+	if _, err := redo.file.ReadAt(data, redo.offset+SzData+SzCheckSum); err != nil {
 		panic(err)
 	}
 	// 当且仅当完整读完一条log时，更改offset
-	log.offset += SzData + SzCheckSum + dataSize
+	redo.offset += SzData + SzCheckSum + dataSize
 	return
 }
 
-// 将size...checkSum...data 包装成一条log
-func (log *RedoLog) wrapLog(data []byte) []byte {
-	checkSum := calcCheckSum(0, data)
-	size := len(data)
-	buffer1 := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer1, binary.BigEndian, int32(size))
-	buffer2 := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer2, binary.BigEndian, checkSum)
-	// size...checkSum...data
-	ret := make([]byte, SzCheckSum+SzData+int64(len(data)))
-	copy(ret[0:SzData], buffer1.Bytes())
-	copy(ret[SzData:SzCheckSum+SzData], buffer2.Bytes())
-	copy(ret[SzCheckSum+SzData:], data)
-	return ret
+// Crash Recovery
+// This Crash Recovery can only run under the isolation level of "READ REPEATABLE"
+// 必须保证进入DataManager记录数据的操作满足RR以上隔离级别，否则恢复系统将失效
+
+// or, this recovery mechanism will be invalid
+// Data format of updateLog [LogType]4[XID]8[PageID]8[Offset]8[OldRawLength]8[OldRaw][NewRaw]
+// Data format of insertLog [LogType]4[XID]8[PageId]8[Offset]8[Raw]
+// XID -> transaction id XID must also be updated first before updating the data
+
+type OperationType int32
+
+type RecoveryType int32
+
+type TransactionMap map[int64][][]byte
+
+func NewTransactionMap() TransactionMap {
+	return make(map[int64][][]byte, 0)
 }
 
-// Crash Recovery
+const (
+	UPDATE   OperationType = 0 // DELETE is essentially a UPDATE operation
+	INSERT   OperationType = 1
+	SzOpt    int           = 4
+	SzXid    int           = 8
+	SzPageId int           = 8
+	SzOffset int           = 8
+	REDO     RecoveryType  = 0
+	UNDO     RecoveryType  = 1
+)
+
+// CrashRecover
+// do crash recover only when the storage engine starts
+// no lock
+// undo all the transaction if not finished
+// redo all the transaction if finished
+func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
+	log.Printf("Recoving Data...\n")
+	toRedo, toUndo := NewTransactionMap(), NewTransactionMap()
+	redo.Reset()
+	var maxPageId int64 = 1
+	for true {
+		nextLog := redo.nextUnlock()
+		if nextLog == nil {
+			break
+		}
+		xid := getXid(nextLog)
+		pageId := getPageId(nextLog)
+		xStatus := tm.Status(xid)
+		if xStatus&(1<<FINISH) == 0 {
+			// undo 撤销
+			toUndo[xid] = append(toUndo[xid], nextLog)
+		} else {
+			// redo 重做
+			toRedo[xid] = append(toRedo[xid], nextLog)
+		}
+		if pageId > maxPageId {
+			maxPageId = pageId
+		}
+	}
+	// init page cache
+	if err := pc.TruncateDataSource(maxPageId); err != nil {
+		panic("Error occurs when truncating page cache\n")
+	}
+	log.Printf("Recovering redo\n")
+	redoRecovery(toRedo, pc)
+	log.Printf("Recovering undo\n")
+	undoRecovery(toUndo, pc, tm)
+	log.Printf("Recovery finish\n")
+}
+
+// redo
+// 对所有完成的事物(FINISH)进行正序重新执行
+func redoRecovery(tx TransactionMap, pc PageCache) {
+	for _, logs := range tx {
+		for _, lg := range logs {
+			opt := getOperationType(lg)
+			if opt == UPDATE {
+				doUpdate(lg, pc, REDO)
+			} else {
+				doInsert(lg, pc, REDO)
+			}
+		}
+	}
+}
+
+// undo
+// 对所有崩溃时未完成的事物(ACTIVE)进行倒序回滚
+func undoRecovery(tx TransactionMap, pc PageCache, tm TransactionManager) {
+	for xid, logs := range tx {
+		length := len(logs)
+		for i := length - 1; i >= 0; i-- {
+			opt := getOperationType(logs[i])
+			if opt == UPDATE {
+				doUpdate(logs[i], pc, UNDO)
+			} else {
+				doInsert(logs[i], pc, UNDO)
+			}
+		}
+		// set aborted
+		tm.Abort(xid)
+	}
+}
 
 // TODO
+// doInsert 执行插入操作
+func doInsert(data []byte, pc PageCache, opt RecoveryType) {
 
-// Create
+}
+
+// TODO
+// doUpdate 执行更新操作
+func doUpdate(data []byte, pc PageCache, opt RecoveryType) {
+
+}
+
+// Create / Init(Load) Redo Log
 
 func CreateRedoLog(path string) Log {
 	file, err := os.Create(path + LogSuffix)
@@ -199,9 +305,83 @@ func OpenRedoLog(path string) Log {
 	return redoLog
 }
 
+// utils
+
 func calcCheckSum(checkSum int, data []byte) int32 {
 	for _, b := range data {
 		checkSum = (checkSum + SEED*int(b)%MOD) % MOD
 	}
 	return int32(checkSum)
+}
+
+// 将size...checkSum...data 包装成一条log
+func wrapLog(data []byte) []byte {
+	checkSum := calcCheckSum(0, data)
+	size := len(data)
+	buffer1 := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer1, binary.BigEndian, int32(size))
+	buffer2 := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer2, binary.BigEndian, checkSum)
+	// [size][checkSum][data]
+	ret := make([]byte, SzCheckSum+SzData+int64(len(data)))
+	copy(ret[0:SzData], buffer1.Bytes())
+	copy(ret[SzData:SzCheckSum+SzData], buffer2.Bytes())
+	copy(ret[SzCheckSum+SzData:], data)
+	return ret
+}
+
+// Operation Parser
+
+func getOperationType(data []byte) OperationType {
+	return OperationType(binary.BigEndian.Uint32(data[0:SzOpt]))
+}
+
+func getXid(data []byte) int64 {
+	return int64(binary.BigEndian.Uint64(data[SzOpt : SzXid+SzOpt]))
+}
+
+func getPageId(data []byte) int64 {
+	return int64(binary.BigEndian.Uint64(data[SzOpt+SzXid : SzOpt+SzXid+SzPageId]))
+}
+
+func wrapInsertLog(xid, pageId, offset int64, raw []byte) []byte {
+	buffer := bytes.NewBuffer(make([]byte, 0))
+	_ = binary.Write(buffer, binary.BigEndian, int32(INSERT))
+	_ = binary.Write(buffer, binary.BigEndian, xid)
+	_ = binary.Write(buffer, binary.BigEndian, pageId)
+	_ = binary.Write(buffer, binary.BigEndian, offset)
+	_ = binary.Write(buffer, binary.BigEndian, raw)
+	return buffer.Bytes()
+}
+
+func parseInsertLog(data []byte) (xid, pageId, offset int64, raw []byte) {
+	data = data[SzOpt:]
+	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
+	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
+	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
+	raw = data[SzXid+SzPageId+SzOffset:]
+	return
+}
+
+func wrapUpdateLog(xid, pageId, offset, oldRawLength int64, oldRaw, newRaw []byte) []byte {
+	buffer := bytes.NewBuffer(make([]byte, 0))
+	_ = binary.Write(buffer, binary.BigEndian, int32(UPDATE))
+	_ = binary.Write(buffer, binary.BigEndian, xid)
+	_ = binary.Write(buffer, binary.BigEndian, pageId)
+	_ = binary.Write(buffer, binary.BigEndian, offset)
+	_ = binary.Write(buffer, binary.BigEndian, oldRawLength)
+	_ = binary.Write(buffer, binary.BigEndian, oldRaw)
+	_ = binary.Write(buffer, binary.BigEndian, newRaw)
+	return buffer.Bytes()
+}
+
+func parseUpdateLog(data []byte) (xid, pageId, offset, oldRawLength int64, oldRaw, newRaw []byte) {
+	data = data[SzOpt:]
+	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
+	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
+	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
+	oldRawLength = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId+SzOffset : SzXid+SzPageId+SzOffset+8]))
+	oldRaw = data[SzXid+SzPageId+SzOffset+8 : SzXid+SzPageId+SzOffset+8+int(oldRawLength)]
+	newRaw = data[SzXid+SzPageId+SzOffset+8+int(oldRawLength):]
+	return
 }

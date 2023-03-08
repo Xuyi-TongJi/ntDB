@@ -11,9 +11,10 @@ import (
 // 事物的状态
 
 const (
+	FINISH          int    = 7
 	ACTIVE          byte   = 0
-	COMMITTED       byte   = 1
-	ABORTED         byte   = 2
+	COMMITTED       byte   = 1 | (1 << FINISH)
+	ABORTED         byte   = 2 | (1 << FINISH)
 	SuperXID        int64  = 0      // 超级事物的xid为0，其永远为提交状态
 	XidFileSuffix   string = ".xid" // xid文件后缀
 	XidStatusSize   int64  = 1      // 每个事物用1个字节(byte)记录
