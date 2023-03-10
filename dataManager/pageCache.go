@@ -3,6 +3,7 @@ package dataManager
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -37,7 +38,7 @@ type PageCacheImpl struct {
 	// implemented by PageCache
 	pool        BufferPool
 	ds          DataSource   // only used for NewPage-> doFlush method
-	lock        sync.Mutex   // protect the NewPage/ GetPage/ ReleasePage, the only global lock of the page cache system
+	lock        *sync.Mutex  // protect the NewPage/ GetPage/ ReleasePage, the only global lock of the page cache system
 	pageNumbers atomic.Int64 // the total page numbers in the currentFile
 }
 
@@ -56,18 +57,13 @@ func (p *PageCacheImpl) Close() {
 func (p *PageCacheImpl) NewPage(data []byte, pt PageType) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if int64(len(data)) > PageSize {
+	if int64(len(data)) > PageSize-SzUsed-SzPageType {
 		panic("Data length overflow when creating a new page")
 	}
-	var dt []byte
-	if int64(len(data)) < PageSize {
-		dt = make([]byte, PageSize)
-		copy(dt[:len(data)], data)
-	} else {
-		dt = data
-	}
 	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p, pt)
-	newPage.SetData(dt)
+	if err := newPage.Append(data); err != nil {
+		panic(fmt.Sprintf("Error occurs when creating a page, err = %s\n", err))
+	}
 	p.pageNumbers.Add(1)
 	p.DoFlush(newPage)
 	return p.pageNumbers.Load()
@@ -147,7 +143,7 @@ func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache, page
 	case *FileSystemDataSource:
 		data := make([]byte, PageSize)
 		buf := bytes.NewBuffer([]byte{})
-		_ = binary.Write(buf, binary.BigEndian, int32(0))
+		_ = binary.Write(buf, binary.BigEndian, int32(SzPageType+SzUsed))
 		copy(data[0:SzUsed], buf.Bytes())
 		buf = bytes.NewBuffer([]byte{})
 		_ = binary.Write(buf, binary.BigEndian, int32(pageType))
@@ -160,13 +156,17 @@ func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache, page
 	}
 }
 
-func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string) PageCache {
-	this := &PageCacheImpl{}
-	ds := NewFileSystemDataSource(path, &this.lock)
+func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string, lock *sync.Mutex) PageCache {
+	this := &PageCacheImpl{lock: lock}
+	ds := NewFileSystemDataSource(path, lock)
 	length := ds.GetDataLength()
 	this.pageNumbers.Store(length / PageSize)
 	this.ds = ds
-	bufferPool := NewRefCountBufferPool(maxRecourse, ds, &this.lock)
+	bufferPool := NewRefCountBufferPool(maxRecourse, ds, lock)
 	this.pool = bufferPool
+	if this.pageNumbers.Load() < 1 {
+		// set db meta page
+		this.NewPage([]byte{}, DbMetaPage)
+	}
 	return this
 }

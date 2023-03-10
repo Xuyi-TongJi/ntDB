@@ -18,9 +18,9 @@ type Page interface {
 	PoolObj
 	Lock()
 	Unlock()
-	Append(toAdd []byte) error                  // 插入数据
-	RecoverData(raw []byte, offset int64) error // 异常恢复数据
-	Update(toUp []byte, offset int64) error     // 更新数据
+	Append(toAdd []byte) error              // 插入数据
+	Update(toUp []byte, offset int64) error // 更新数据
+	Remove(toRem []byte, offset int64) error
 	CheckInitVersion() bool
 	InitVersion()
 	UpdateVersion()
@@ -140,40 +140,42 @@ func (e *ErrorPageOverFlow) Error() string {
 
 // Append 向页末尾添加数据
 func (p *PageImpl) Append(toAdd []byte) error {
-	if p.GetPageType()&(1<<1) == 0 {
-		panic("Invalid page type when executing inserting data\n")
-	}
+	p.Lock()
+	defer p.Unlock()
 	used, length := p.GetUsed(), int64(len(toAdd))
 	if length+used > PageSize {
 		return &ErrorPageOverFlow{}
 	}
-	p.Lock()
-	defer p.Unlock()
 	copy(p.GetData()[used:used+length], toAdd)
 	p.SetUsed(int32(used + length))
 	p.SetDirty(true)
 	return nil
 }
 
-func (p *PageImpl) RecoverData(raw []byte, offset int64) error {
-	return p.Update(raw, offset)
-}
-
 // Update 更新数据页的数据
 func (p *PageImpl) Update(toUp []byte, offset int64) error {
-	if p.GetPageType()&(1<<1) == 0 {
-		panic("Invalid page type when executing updating data\n")
-	}
+	p.Lock()
+	defer p.Lock()
 	length := int64(len(toUp))
 	if length+offset > PageSize {
 		return &ErrorPageOverFlow{}
 	}
-	p.Lock()
-	defer p.Lock()
 	copy(p.GetData()[offset:offset+length], toUp)
 	currentLength := p.GetUsed()
 	if length+offset > currentLength {
 		p.SetUsed(int32(length + offset))
+	}
+	p.SetDirty(true)
+	return nil
+}
+
+func (p *PageImpl) Remove(toRem []byte, offset int64) error {
+	p.Lock()
+	defer p.Lock()
+	length := int64(len(toRem))
+	currentLength := p.GetUsed()
+	if length+offset == currentLength {
+		p.SetUsed(int32(offset))
 	}
 	p.SetDirty(true)
 	return nil

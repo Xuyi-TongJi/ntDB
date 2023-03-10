@@ -34,7 +34,7 @@ const (
 type RedoLog struct {
 	file     *os.File
 	checkSum int32
-	lock     sync.Mutex
+	lock     *sync.Mutex
 	offset   int64 // current pointer used for iterator
 }
 
@@ -168,7 +168,7 @@ func (redo *RedoLog) nextUnlock() (data []byte) {
 // 必须保证进入DataManager记录数据的操作满足RR以上隔离级别，否则恢复系统将失效
 
 // or, this recovery mechanism will be invalid
-// Data format of updateLog [LogType]4[XID]8[PageID]8[Offset]8[OldRawLength]8[OldRaw][NewRaw]
+// Data format of updateLog [LogType]4[XID]8[PageId]8[Offset]8[OldRawLength]8[OldRaw][NewRaw]
 // Data format of insertLog [LogType]4[XID]8[PageId]8[Offset]8[Raw]
 // XID -> transaction id XID must also be updated first before updating the data
 
@@ -241,9 +241,9 @@ func redoRecovery(tx TransactionMap, pc PageCache) {
 		for _, lg := range logs {
 			opt := getOperationType(lg)
 			if opt == UPDATE {
-				doUpdate(lg, pc, REDO)
+				doUpdateRecovery(lg, pc, REDO)
 			} else {
-				doInsert(lg, pc, REDO)
+				doInsertRecovery(lg, pc, REDO)
 			}
 		}
 	}
@@ -257,9 +257,9 @@ func undoRecovery(tx TransactionMap, pc PageCache, tm TransactionManager) {
 		for i := length - 1; i >= 0; i-- {
 			opt := getOperationType(logs[i])
 			if opt == UPDATE {
-				doUpdate(logs[i], pc, UNDO)
+				doUpdateRecovery(logs[i], pc, UNDO)
 			} else {
-				doInsert(logs[i], pc, UNDO)
+				doInsertRecovery(logs[i], pc, UNDO)
 			}
 		}
 		// set aborted
@@ -267,21 +267,45 @@ func undoRecovery(tx TransactionMap, pc PageCache, tm TransactionManager) {
 	}
 }
 
-// TODO
-// doInsert 执行插入操作
-func doInsert(data []byte, pc PageCache, opt RecoveryType) {
-
+// doInsertRecovery 执行插入操作
+func doInsertRecovery(data []byte, pc PageCache, opt RecoveryType) {
+	_, pageId, offset, raw := parseInsertLog(data)
+	if pg, err := pc.GetPage(pageId); err != nil {
+		panic(fmt.Sprintf("Error occurs when getting page, err = %s\n", err))
+	} else {
+		var err error
+		if opt == REDO {
+			err = pg.Update(raw, offset)
+		} else {
+			err = pg.Remove(raw, offset)
+		}
+		if err != nil {
+			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
+		}
+	}
 }
 
-// TODO
-// doUpdate 执行更新操作
-func doUpdate(data []byte, pc PageCache, opt RecoveryType) {
-
+// doUpdateRecovery 执行更新恢复操作
+func doUpdateRecovery(data []byte, pc PageCache, opt RecoveryType) {
+	_, pageId, offset, _, oldRaw, newRaw := parseUpdateLog(data)
+	if pg, err := pc.GetPage(pageId); err != nil {
+		panic(fmt.Sprintf("Error occurs when getting page, err = %s\n", err))
+	} else {
+		var err error
+		if opt == REDO {
+			err = pg.Update(newRaw, offset)
+		} else {
+			err = pg.Update(oldRaw, offset)
+		}
+		if err != nil {
+			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
+		}
+	}
 }
 
 // Create / Init(Load) Redo Log
 
-func CreateRedoLog(path string) Log {
+func CreateRedoLog(path string, lock *sync.Mutex) Log {
 	file, err := os.Create(path + LogSuffix)
 	if err != nil {
 		panic(err)
@@ -295,20 +319,22 @@ func CreateRedoLog(path string) Log {
 	redoLog := &RedoLog{
 		file:     file,
 		checkSum: 0,
+		lock:     lock,
 	}
 	redoLog.reset()
 	return redoLog
 }
 
-func OpenRedoLog(path string) Log {
+func OpenRedoLog(path string, lock *sync.Mutex) Log {
 	file, err := os.OpenFile(path+LogSuffix, os.O_RDWR, 0666)
 	if err != nil && errors.Is(err, os.ErrNotExist) {
-		return CreateRedoLog(path)
+		return CreateRedoLog(path, lock)
 	} else if err != nil {
 		panic(err)
 	}
 	redoLog := &RedoLog{
 		file: file,
+		lock: lock,
 	}
 	redoLog.init()
 	return redoLog

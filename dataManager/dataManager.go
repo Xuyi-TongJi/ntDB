@@ -38,9 +38,9 @@ func (dm *DmImpl) Close() {
 }
 
 func OpenDataManager(path string, memory int64) DataManager {
-	pc := NewPageCacheRefCountFileSystemImpl(uint32(memory/PageSize), path)
+	pc := NewPageCacheRefCountFileSystemImpl(uint32(memory/PageSize), path, &sync.Mutex{})
 	pageCtl := InitCtl(&sync.Mutex{}, pc)
-	redo := OpenRedoLog(path)
+	redo := OpenRedoLog(path, &sync.Mutex{})
 	tx := NewTransactionManagerImpl(path)
 	dm := &DmImpl{
 		pageCache:          pc,

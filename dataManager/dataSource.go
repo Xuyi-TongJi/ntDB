@@ -39,10 +39,6 @@ func NewFileSystemDataSource(path string, lock *sync.Mutex) DataSource {
 			if err != nil {
 				panic(err)
 			}
-			// 预留一个PageSize空间
-			if err := f.Truncate(PageSize * 1); err != nil {
-				panic(err)
-			}
 		}
 	} else {
 		panic(err)
