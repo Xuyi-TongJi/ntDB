@@ -18,13 +18,23 @@ type Page interface {
 	PoolObj
 	Lock()
 	Unlock()
-	Insert(toAdd []byte) error                  // 插入数据
+	Append(toAdd []byte) error                  // 插入数据
 	RecoverData(raw []byte, offset int64) error // 异常恢复数据
 	Update(toUp []byte, offset int64) error     // 更新数据
+	CheckInitVersion() bool
+	InitVersion()
+	UpdateVersion()
+	GetUsed() int64
+	SetUsed(used int32)
+	GetFree() int64
+	GetPageType() PageType
+	IsMetaPage() bool
+	IsDataPage() bool
 }
 
 type PageType int32
 
+// META page pageType & (1 << 0) == 1 else ordinary page
 const (
 	DbMetaPage    PageType = 1<<0 | 1<<15
 	TableMetaPage PageType = 1<<0 | 1<<16
@@ -34,16 +44,20 @@ const (
 	VcOn     = 100
 	VcOffset = 8
 	VcOff    = VcOn + VcOffset
+
+	SzUsed     int64 = 4
+	SzPageType int64 = 4
 )
 
 type PageImpl struct {
-	lock     sync.Mutex
-	data     []byte
-	dirty    bool
-	pageId   int64
-	pc       PageCache // 每个Page组合一个PageCache，可以在操作页面时对页面缓存进行操作
-	pageType PageType  // page的种类 元数据/普通页/索引页
+	lock   sync.Mutex
+	data   []byte
+	dirty  bool
+	pageId int64
+	pc     PageCache // 每个Page组合一个PageCache，可以在操作页面时对页面缓存进行操作
 }
+
+// Page结构 [Used Space]4[Page Type]4[Data...]
 
 func (p *PageImpl) Lock() {
 	p.lock.Lock()
@@ -87,7 +101,7 @@ func (p *PageImpl) SetData(data []byte) {
 // 启动检查，检查进程上次退出是否是意外退出
 // 如果是意外退出，则上层需要执行恢复数据的逻辑
 func (p *PageImpl) CheckInitVersion() bool {
-	if p.pageType != DbMetaPage {
+	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
 	data := p.GetData()
@@ -97,7 +111,7 @@ func (p *PageImpl) CheckInitVersion() bool {
 
 // InitVersion 初始化版本号, 仅当系统启动时调用
 func (p *PageImpl) InitVersion() {
-	if p.pageType != DbMetaPage {
+	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
 	data := p.GetData()
@@ -108,7 +122,7 @@ func (p *PageImpl) InitVersion() {
 
 // UpdateVersion 更新包版本号, 仅当系统正常退出时调用
 func (p *PageImpl) UpdateVersion() {
-	if p.pageType != DbMetaPage {
+	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
 	data := p.GetData()
@@ -124,16 +138,19 @@ func (e *ErrorPageOverFlow) Error() string {
 	return "Page Space overflow"
 }
 
-// Insert 向页末尾添加数据
-func (p *PageImpl) Insert(toAdd []byte) error {
-	used, length := p.getUsed(), int64(len(toAdd))
+// Append 向页末尾添加数据
+func (p *PageImpl) Append(toAdd []byte) error {
+	if p.GetPageType()&(1<<1) == 0 {
+		panic("Invalid page type when executing inserting data\n")
+	}
+	used, length := p.GetUsed(), int64(len(toAdd))
 	if length+used > PageSize {
 		return &ErrorPageOverFlow{}
 	}
 	p.Lock()
 	defer p.Unlock()
 	copy(p.GetData()[used:used+length], toAdd)
-	p.setUsed(uint16(used + length))
+	p.SetUsed(int32(used + length))
 	p.SetDirty(true)
 	return nil
 }
@@ -142,7 +159,11 @@ func (p *PageImpl) RecoverData(raw []byte, offset int64) error {
 	return p.Update(raw, offset)
 }
 
+// Update 更新数据页的数据
 func (p *PageImpl) Update(toUp []byte, offset int64) error {
+	if p.GetPageType()&(1<<1) == 0 {
+		panic("Invalid page type when executing updating data\n")
+	}
 	length := int64(len(toUp))
 	if length+offset > PageSize {
 		return &ErrorPageOverFlow{}
@@ -150,25 +171,38 @@ func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	p.Lock()
 	defer p.Lock()
 	copy(p.GetData()[offset:offset+length], toUp)
-	currentLength := p.getUsed()
+	currentLength := p.GetUsed()
 	if length+offset > currentLength {
-		p.setUsed(uint16(length + offset))
+		p.SetUsed(int32(length + offset))
 	}
 	p.SetDirty(true)
 	return nil
 }
 
-func (p *PageImpl) getUsed() int64 {
-	buf := p.GetData()[:2]
-	return int64(binary.BigEndian.Uint16(buf))
+func (p *PageImpl) GetUsed() int64 {
+	buf := p.GetData()[:SzUsed]
+	return int64(binary.BigEndian.Uint32(buf))
 }
 
-func (p *PageImpl) setUsed(used uint16) {
+func (p *PageImpl) SetUsed(used int32) {
 	buf := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buf, binary.BigEndian, used)
-	copy(p.GetData()[:2], buf.Bytes())
+	copy(p.GetData()[:SzUsed], buf.Bytes())
 }
 
-func (p *PageImpl) getFree() int64 {
-	return PageSize - p.getUsed()
+func (p *PageImpl) GetFree() int64 {
+	return PageSize - p.GetUsed() - SzPageType - SzUsed
+}
+
+func (p *PageImpl) GetPageType() PageType {
+	buf := p.GetData()[SzUsed : SzUsed+SzPageType]
+	return PageType(binary.BigEndian.Uint32(buf))
+}
+
+func (p *PageImpl) IsMetaPage() bool {
+	return p.GetPageType()&(1<<0) == 1
+}
+
+func (p *PageImpl) IsDataPage() bool {
+	return p.GetPageType()&(1<<1) == 1
 }

@@ -19,12 +19,8 @@ import (
 type Log interface {
 	Log(data []byte) // 记录下一条log
 	Close()
-	Next() []byte // 迭代器获得下一条log data
-	Reset()       // 重置迭代器指针
-}
-
-type Redo interface {
-	CrashRecover()
+	Next() []byte                                     // 迭代器获得下一条log data
+	CrashRecover(pc PageCache, tm TransactionManager) // 崩溃恢复
 }
 
 const (
@@ -79,8 +75,20 @@ func (redo *RedoLog) Next() []byte {
 	return redo.nextUnlock()
 }
 
-func (redo *RedoLog) Reset() {
+func (redo *RedoLog) reset() {
 	redo.offset = SzCheckSum
+}
+
+func (redo *RedoLog) resetLog() {
+	if err := redo.file.Truncate(0); err != nil {
+		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
+	}
+	buffer := bytes.NewBuffer(make([]byte, 0))
+	_ = binary.Write(buffer, binary.BigEndian, int32(0))
+	// 4 bytes checkSum
+	if _, err := redo.file.Write(buffer.Bytes()); err != nil {
+		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
+	}
 }
 
 // init
@@ -103,7 +111,7 @@ func (redo *RedoLog) init() {
 // 移除log中上次关闭未写完的部分
 // only in init method
 func (redo *RedoLog) removeTail() {
-	redo.Reset()
+	redo.reset()
 	var checkedCheckSum int32 = 0
 	for true {
 		nextLogData := redo.nextUnlock()
@@ -117,7 +125,7 @@ func (redo *RedoLog) removeTail() {
 	}
 	// truncate
 	redo.truncate(redo.offset)
-	redo.Reset() // roll back the pointer
+	redo.reset() // roll back the pointer
 }
 
 // truncate 截断文件
@@ -193,7 +201,7 @@ const (
 func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
 	log.Printf("Recoving Data...\n")
 	toRedo, toUndo := NewTransactionMap(), NewTransactionMap()
-	redo.Reset()
+	redo.reset()
 	var maxPageId int64 = 1
 	for true {
 		nextLog := redo.nextUnlock()
@@ -223,6 +231,7 @@ func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
 	log.Printf("Recovering undo\n")
 	undoRecovery(toUndo, pc, tm)
 	log.Printf("Recovery finish\n")
+	redo.resetLog()
 }
 
 // redo
@@ -287,7 +296,7 @@ func CreateRedoLog(path string) Log {
 		file:     file,
 		checkSum: 0,
 	}
-	redoLog.Reset()
+	redoLog.reset()
 	return redoLog
 }
 

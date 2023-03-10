@@ -1,7 +1,8 @@
 package dataManager
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/binary"
 	"sync"
 	"sync/atomic"
 )
@@ -18,12 +19,13 @@ func init() {
 // 基于页面Page的缓存接口
 
 type PageCache interface {
-	NewPage(data []byte) int64
+	NewPage(data []byte, pageType PageType) int64
 	GetPage(pageId int64) (Page, error)
 	ReleasePage(page Page) error
 	TruncateDataSource(maxPageNumbers int64) error
 	GetPageNumbers() int64
-	Close() error
+	Close()
+	DoFlush(page Page) // 直接刷新到数据源
 }
 
 // Implementation
@@ -39,17 +41,19 @@ type PageCacheImpl struct {
 	pageNumbers atomic.Int64 // the total page numbers in the currentFile
 }
 
-func (p *PageCacheImpl) Close() error {
+func (p *PageCacheImpl) Close() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if err := p.pool.Close(); err != nil {
-		return err
+		panic(err)
 	}
-	return p.ds.Close()
+	if err := p.ds.Close(); err != nil {
+		panic(err)
+	}
 }
 
 // NewPage 新建一个页，并写入数据源
-func (p *PageCacheImpl) NewPage(data []byte) int64 {
+func (p *PageCacheImpl) NewPage(data []byte, pt PageType) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if int64(len(data)) > PageSize {
@@ -62,10 +66,10 @@ func (p *PageCacheImpl) NewPage(data []byte) int64 {
 	} else {
 		dt = data
 	}
-	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p)
+	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p, pt)
 	newPage.SetData(dt)
 	p.pageNumbers.Add(1)
-	p.doFlush(newPage)
+	p.DoFlush(newPage)
 	return p.pageNumbers.Load()
 }
 
@@ -77,11 +81,12 @@ func (p *PageCacheImpl) GetPage(pageId int64) (Page, error) {
 		panic("Invalid page id\n")
 	}
 	// 组装空Page
-	page := defaultPageFactory.newPage(p.ds, pageId, p)
+	page := defaultPageFactory.newPage(p.ds, pageId, p, -1)
 	if result, err := p.pool.Get(page); err != nil {
 		return nil, err
 	} else {
-		return result.(Page), nil
+		pg := result.(Page)
+		return pg, nil
 	}
 }
 
@@ -92,7 +97,7 @@ func (p *PageCacheImpl) ReleasePage(page Page) error {
 	return p.pool.Release(page)
 }
 
-// TruncateDataSource 清空文件, 并预留maxPageNumbers个页的空间
+// TruncateDataSource 清空DataSource, 并预留maxPageNumbers个页的空间
 // if ds doesn't support Truncation, then panic
 func (p *PageCacheImpl) TruncateDataSource(maxPageNumbers int64) error {
 	p.lock.Lock()
@@ -117,14 +122,11 @@ func (p *PageCacheImpl) checkKeyValid(pageId int64) bool {
 	return pageId <= p.pageNumbers.Load() && pageId > 0
 }
 
-// doFlush
+// DoFlush
 // must take the lock first(private method)
 // flush the page into data source, any error will panic
-func (p *PageCacheImpl) doFlush(page Page) {
-	pageId := page.GetId()
-	if !p.checkKeyValid(pageId) {
-		panic(fmt.Sprintf("Invalid page id %d\n", pageId))
-	}
+// ONLY WRITE TO THE OS CACHE
+func (p *PageCacheImpl) DoFlush(page Page) {
 	if err := p.ds.FlushBackToDataSource(page); err != nil {
 		panic(err)
 	}
@@ -133,18 +135,25 @@ func (p *PageCacheImpl) doFlush(page Page) {
 // Page Factory
 
 type pageFactory interface {
-	newPage(ds DataSource, pageId int64, pc PageCache) Page
+	newPage(ds DataSource, pageId int64, pc PageCache, pageType PageType) Page
 }
 
 type pageFactoryImpl struct{}
 
 // 工厂方法
 // extensible
-func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache) Page {
+func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache, pageType PageType) Page {
 	switch ds.(type) {
 	case *FileSystemDataSource:
+		data := make([]byte, PageSize)
+		buf := bytes.NewBuffer([]byte{})
+		_ = binary.Write(buf, binary.BigEndian, int32(0))
+		copy(data[0:SzUsed], buf.Bytes())
+		buf = bytes.NewBuffer([]byte{})
+		_ = binary.Write(buf, binary.BigEndian, int32(pageType))
+		copy(data[SzUsed:SzUsed+SzPageType], buf.Bytes())
 		return &PageImpl{
-			pageId: pageId, dirty: false, pc: pc,
+			pageId: pageId, dirty: false, pc: pc, data: data,
 		}
 	default:
 		panic("Invalid dataSource type\n")
@@ -154,6 +163,8 @@ func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache) Page
 func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string) PageCache {
 	this := &PageCacheImpl{}
 	ds := NewFileSystemDataSource(path, &this.lock)
+	length := ds.GetDataLength()
+	this.pageNumbers.Store(length / PageSize)
 	this.ds = ds
 	bufferPool := NewRefCountBufferPool(maxRecourse, ds, &this.lock)
 	this.pool = bufferPool

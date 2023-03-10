@@ -30,7 +30,7 @@ type TransactionManager interface {
 	Commit(xid int64)
 	Abort(xid int64)
 	Status(xid int64) byte
-	close()
+	Close()
 }
 
 type TransactionManagerImpl struct {
@@ -131,7 +131,7 @@ func (t *TransactionManagerImpl) Status(xid int64) byte {
 	return buf[0]
 }
 
-func (t *TransactionManagerImpl) close() {
+func (t *TransactionManagerImpl) Close() {
 	if err := t.file.Close(); err != nil {
 		panic(err)
 	}

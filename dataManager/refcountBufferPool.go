@@ -10,7 +10,7 @@ type RefCountBufferPoolImpl struct {
 	cache       map[int64]PoolObj
 	refCount    map[int64]uint32
 	caching     map[int64]struct{} // 正在进行IO请求的key
-	maxRecourse uint32             // bufferPool最大支持的缓存cacheId个数
+	maxRecourse uint32             // bufferPool最大支持的缓存cacheId个数,来源于系统配置(默认16384)
 	count       uint32             // 目前内存中的cacheId个数
 	ds          DataSource
 	lock        *sync.Mutex // 与PageCache共用一把锁
