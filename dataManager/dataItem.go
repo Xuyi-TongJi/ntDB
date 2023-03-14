@@ -16,10 +16,8 @@ type DataItem interface {
 	GetOldRaw() []byte
 	IsValid() bool
 	SetInvalid()
-	Release()
-	Page() Page
-	GetPageId() int64
-	GetOffset() int64
+	GetPage() Page
+	GetUid() int64
 
 	// lock
 
@@ -38,41 +36,33 @@ type DataItem interface {
 // DataItemImpl
 // RAW: [valid]1[dataSize]8[data]
 type DataItemImpl struct {
-	page   Page // BufferPool中的页
-	pageId int64
-	offset int64
+	page   Page // BufferPool中的页, 当前raw位于哪个页
+	uid    int64
 	dm     DataManager
 	raw    []byte
 	oldRaw []byte
 	lock   *sync.RWMutex
-	redo   Log
 }
 
 const (
-	SzValid    int = 1
-	SzDataSize int = 8
+	SzDIValid    int64 = 1
+	SzDIDataSize int64 = 8
 )
 
-func NewDataItem(data []byte, lock *sync.RWMutex, redo Log, dm DataManager,
-	page Page, pageId int64, offset int64) DataItem {
-	buffer := bytes.NewBuffer(make([]byte, 0))
-	_ = binary.Write(buffer, binary.BigEndian, byte(1))
-	_ = binary.Write(buffer, binary.BigEndian, int64(len(data)))
-	_ = binary.Write(buffer, binary.BigEndian, data)
+func NewDataItem(raw []byte, oldRaw []byte, lock *sync.RWMutex, dm DataManager,
+	page Page, uid int64) DataItem {
 	return &DataItemImpl{
 		page:   page,
-		pageId: pageId,
-		offset: offset,
+		uid:    uid,
 		dm:     dm,
-		raw:    buffer.Bytes(),
-		oldRaw: nil,
+		raw:    raw,
+		oldRaw: oldRaw,
 		lock:   lock,
-		redo:   redo,
 	}
 }
 
 func (di *DataItemImpl) GetData() []byte {
-	return di.raw[SzValid+SzDataSize:]
+	return di.raw[SzDIValid+SzDIDataSize:]
 }
 
 func (di *DataItemImpl) GetRaw() []byte {
@@ -83,12 +73,8 @@ func (di *DataItemImpl) GetOldRaw() []byte {
 	return di.oldRaw
 }
 
-func (di *DataItemImpl) GetPageId() int64 {
-	return di.pageId
-}
-
-func (di *DataItemImpl) GetOffset() int64 {
-	return di.offset
+func (di *DataItemImpl) GetUid() int64 {
+	return di.uid
 }
 
 func (di *DataItemImpl) IsValid() bool {
@@ -96,14 +82,10 @@ func (di *DataItemImpl) IsValid() bool {
 }
 
 func (di *DataItemImpl) SetInvalid() {
-	copy(di.raw[:SzValid], []byte{byte(1)})
+	copy(di.raw[:SzDIValid], []byte{byte(1)})
 }
 
-func (di *DataItemImpl) Release() {
-	// TODO
-}
-
-func (di *DataItemImpl) Page() Page {
+func (di *DataItemImpl) GetPage() Page {
 	return di.page
 }
 
@@ -137,7 +119,14 @@ func (di *DataItemImpl) AfterUpdate(xid int64) {
 	panic("implement me")
 }
 
-func (di *DataItemImpl) ParseDataItem(pageId, offset int64) DataItem {
-	// TODO
-	return nil
+// WrapDataItemRaw
+// RAW: [valid]1[dataSize]8[data]
+func wrapDataItemRaw(raw []byte) []byte {
+	size := int64(len(raw))
+	valid := int8(1)
+	buffer := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer, binary.BigEndian, valid)
+	_ = binary.Write(buffer, binary.BigEndian, size)
+	_ = binary.Write(buffer, binary.BigEndian, raw)
+	return buffer.Bytes()
 }

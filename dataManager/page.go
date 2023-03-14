@@ -8,11 +8,7 @@ import (
 	"sync"
 )
 
-// 页及页缓存及其实现
-
-const (
-	PageSize int64 = 8192 // 8K bytes
-)
+// Page
 
 type Page interface {
 	PoolObj
@@ -40,13 +36,17 @@ const (
 	TableMetaPage PageType = 1<<0 | 1<<16
 	IndexPage     PageType = 1<<1 | 1<<17
 	RecordPage    PageType = 1<<1 | 1<<18
+	DataPage      PageType = 1 << 1
+	MetaPage      PageType = 1 << 0
 
 	VcOn     = 100
 	VcOffset = 8
 	VcOff    = VcOn + VcOffset
 
-	SzUsed     int64 = 4
-	SzPageType int64 = 4
+	PageSize    int64 = 8192 // 8K bytes
+	SzPgUsed    int64 = 4
+	SzPageType  int64 = 4
+	MaxFreeSize int64 = PageSize - SzPgUsed - SzPageType // 数据页面的最大使用空间
 )
 
 type PageImpl struct {
@@ -182,22 +182,22 @@ func (p *PageImpl) Remove(toRem []byte, offset int64) error {
 }
 
 func (p *PageImpl) GetUsed() int64 {
-	buf := p.GetData()[:SzUsed]
+	buf := p.GetData()[:SzPgUsed]
 	return int64(binary.BigEndian.Uint32(buf))
 }
 
 func (p *PageImpl) SetUsed(used int32) {
 	buf := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buf, binary.BigEndian, used)
-	copy(p.GetData()[:SzUsed], buf.Bytes())
+	copy(p.GetData()[:SzPgUsed], buf.Bytes())
 }
 
 func (p *PageImpl) GetFree() int64 {
-	return PageSize - p.GetUsed() - SzPageType - SzUsed
+	return PageSize - p.GetUsed()
 }
 
 func (p *PageImpl) GetPageType() PageType {
-	buf := p.GetData()[SzUsed : SzUsed+SzPageType]
+	buf := p.GetData()[SzPgUsed : SzPgUsed+SzPageType]
 	return PageType(binary.BigEndian.Uint32(buf))
 }
 

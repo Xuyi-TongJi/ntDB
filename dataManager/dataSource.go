@@ -39,9 +39,9 @@ func NewFileSystemDataSource(path string, lock *sync.Mutex) DataSource {
 			if err != nil {
 				panic(err)
 			}
+		} else {
+			panic(err)
 		}
-	} else {
-		panic(err)
 	}
 	fsd := &FileSystemDataSource{
 		file: f,

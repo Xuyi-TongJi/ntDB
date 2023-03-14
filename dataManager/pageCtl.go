@@ -11,19 +11,19 @@ import (
 
 type PageCtl interface {
 	Select(need int64) *PageInfo
-	AddPage(pageId, available int64)
+	AddPageInfo(pageId, available int64)
 	Init(pc PageCache)
 }
 
 type PageInfo struct {
-	pageId    int64
-	available int64
+	PageId    int64
+	Available int64
 }
 
 const (
 	THRESHOLD     int64 = 128
-	TinyTHRESHOLD int64 = THRESHOLD / 4
-	INTERVALS     int64 = PageSize / THRESHOLD //
+	TinyTHRESHOLD       = THRESHOLD / 4
+	INTERVALS           = PageSize / THRESHOLD //
 	OMITTED       int64 = 8                    // 剩余空间小于8的内存页都会被弃用
 )
 
@@ -37,10 +37,10 @@ type PageCtlImpl struct {
 	pc      PageCache
 }
 
-func InitCtl(lock *sync.Mutex, pc PageCache) PageCtl {
+func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
 	var pi [INTERVALS]*LinkedList
 	f := func(a any, b any) int {
-		x, y := a.(*PageInfo).available, b.(*PageInfo).available
+		x, y := a.(*PageInfo).Available, b.(*PageInfo).Available
 		if x == y {
 			return 0
 		} else if x < y {
@@ -100,9 +100,9 @@ func (pi *PageCtlImpl) selectTinyFast(need int64) *PageInfo {
 	return nil
 }
 
-// AddPage 添加一个具有available可用空间的页
+// AddPageInfo 添加一个具有available可用空间的页
 // 注意该空间不一定等于页的大小(PageSize)
-func (pi *PageCtlImpl) AddPage(pageId int64, available int64) {
+func (pi *PageCtlImpl) AddPageInfo(pageId int64, available int64) {
 	if available < OMITTED {
 		return
 	}
@@ -119,7 +119,6 @@ func (pi *PageCtlImpl) AddPage(pageId int64, available int64) {
 // Init 初始化PageCtlImpl
 // 将所有页都读入buffer, 并更新free spaces
 func (pi *PageCtlImpl) Init(pc PageCache) {
-	// TODO
 	pn := pc.GetPageNumbers()
 	for i := int64(1); i <= pn; i++ {
 		if i == PageNumberDbMeta {
@@ -129,9 +128,9 @@ func (pi *PageCtlImpl) Init(pc PageCache) {
 			panic(fmt.Sprintf("Error occurs when getting pages, err = %s\n", err))
 		} else {
 			if p.IsDataPage() {
-				pi.AddPage(p.GetId(), p.GetFree())
+				pi.AddPageInfo(p.GetId(), p.GetFree())
 			}
-			if err := pc.ReleasePage(p); err != nil {
+			if err = pc.ReleasePage(p); err != nil {
 				panic(fmt.Sprintf("Error occurs when releasing pages, err = %s\n", err))
 			}
 		}

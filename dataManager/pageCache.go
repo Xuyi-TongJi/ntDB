@@ -23,7 +23,7 @@ type PageCache interface {
 	NewPage(data []byte, pageType PageType) int64
 	GetPage(pageId int64) (Page, error)
 	ReleasePage(page Page) error
-	TruncateDataSource(maxPageNumbers int64) error
+	SetDsSize(maxPageNumbers int64) error
 	GetPageNumbers() int64
 	Close()
 	DoFlush(page Page) // 直接刷新到数据源
@@ -39,7 +39,7 @@ type PageCacheImpl struct {
 	pool        BufferPool
 	ds          DataSource   // only used for NewPage-> doFlush method
 	lock        *sync.Mutex  // protect the NewPage/ GetPage/ ReleasePage, the only global lock of the page cache system
-	pageNumbers atomic.Int64 // the total page numbers in the currentFile
+	pageNumbers atomic.Int64 // the total page numbers in the DS
 }
 
 func (p *PageCacheImpl) Close() {
@@ -54,10 +54,11 @@ func (p *PageCacheImpl) Close() {
 }
 
 // NewPage 新建一个页，并写入数据源
+// Create a new Page and write data, then return the pageId
 func (p *PageCacheImpl) NewPage(data []byte, pt PageType) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if int64(len(data)) > PageSize-SzUsed-SzPageType {
+	if int64(len(data)) > PageSize-SzPgUsed-SzPageType {
 		panic("Data length overflow when creating a new page")
 	}
 	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p, pt)
@@ -93,15 +94,17 @@ func (p *PageCacheImpl) ReleasePage(page Page) error {
 	return p.pool.Release(page)
 }
 
-// TruncateDataSource 清空DataSource, 并预留maxPageNumbers个页的空间
-// if ds doesn't support Truncation, then panic
-func (p *PageCacheImpl) TruncateDataSource(maxPageNumbers int64) error {
+// SetDsSize 当且仅当DS没有预留maxPageNumbers个size时,申请DS预留maxPageNumbers个页的空间
+func (p *PageCacheImpl) SetDsSize(maxPageNumbers int64) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	if p.pageNumbers.Load() >= maxPageNumbers {
+		return nil
+	}
 	if err := p.ds.Truncate(maxPageNumbers * PageSize); err != nil {
 		return err
 	}
-	p.pageNumbers.Add(maxPageNumbers)
+	p.pageNumbers.Store(maxPageNumbers)
 	return nil
 }
 
@@ -143,11 +146,11 @@ func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache, page
 	case *FileSystemDataSource:
 		data := make([]byte, PageSize)
 		buf := bytes.NewBuffer([]byte{})
-		_ = binary.Write(buf, binary.BigEndian, int32(SzPageType+SzUsed))
-		copy(data[0:SzUsed], buf.Bytes())
+		_ = binary.Write(buf, binary.BigEndian, int32(SzPageType+SzPgUsed))
+		copy(data[0:SzPgUsed], buf.Bytes())
 		buf = bytes.NewBuffer([]byte{})
 		_ = binary.Write(buf, binary.BigEndian, int32(pageType))
-		copy(data[SzUsed:SzUsed+SzPageType], buf.Bytes())
+		copy(data[SzPgUsed:SzPgUsed+SzPageType], buf.Bytes())
 		return &PageImpl{
 			pageId: pageId, dirty: false, pc: pc, data: data,
 		}

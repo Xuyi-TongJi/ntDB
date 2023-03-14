@@ -19,7 +19,8 @@ import (
 type Log interface {
 	Log(data []byte) // 记录下一条log
 	Close()
-	Next() []byte                                     // 迭代器获得下一条log data
+	Next() []byte // 迭代器获得下一条log data
+	ResetLog()
 	CrashRecover(pc PageCache, tm TransactionManager) // 崩溃恢复
 }
 
@@ -41,6 +42,7 @@ type RedoLog struct {
 // Log
 // [Size]4[CheckSum]8[Data] -> log raw format
 // Must flush the wrapped data and then update the checkSum of the redo log file
+// 先写log,最后更新checkSum
 func (redo *RedoLog) Log(data []byte) {
 	redo.lock.Lock()
 	defer redo.lock.Unlock()
@@ -79,7 +81,7 @@ func (redo *RedoLog) reset() {
 	redo.offset = SzCheckSum
 }
 
-func (redo *RedoLog) resetLog() {
+func (redo *RedoLog) ResetLog() {
 	if err := redo.file.Truncate(0); err != nil {
 		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
 	}
@@ -93,6 +95,7 @@ func (redo *RedoLog) resetLog() {
 
 // init
 // 根据redoLog文件恢复现场参数(offset, checkSum)
+// 主要逻辑：removeTail 去除上次崩溃时还未写完的tail
 func (redo *RedoLog) init() {
 	// read checkSum
 	stat, _ := redo.file.Stat()
@@ -168,6 +171,7 @@ func (redo *RedoLog) nextUnlock() (data []byte) {
 // 必须保证进入DataManager记录数据的操作满足RR以上隔离级别，否则恢复系统将失效
 
 // or, this recovery mechanism will be invalid
+// Data format of LOG RAW [Size]4[CheckSum]8[Data]
 // Data format of updateLog [LogType]4[XID]8[PageId]8[Offset]8[OldRawLength]8[OldRaw][NewRaw]
 // Data format of insertLog [LogType]4[XID]8[PageId]8[Offset]8[Raw]
 // XID -> transaction id XID must also be updated first before updating the data
@@ -200,6 +204,8 @@ const (
 // redo all the transaction if finished
 func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
 	log.Printf("Recoving Data...\n")
+	// remove Tail
+	redo.init()
 	toRedo, toUndo := NewTransactionMap(), NewTransactionMap()
 	redo.reset()
 	var maxPageId int64 = 1
@@ -222,8 +228,8 @@ func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
 			maxPageId = pageId
 		}
 	}
-	// init page cache
-	if err := pc.TruncateDataSource(maxPageId); err != nil {
+	// set ds size if needed
+	if err := pc.SetDsSize(maxPageId); err != nil {
 		panic("Error occurs when truncating page cache\n")
 	}
 	log.Printf("Recovering redo\n")
@@ -231,7 +237,6 @@ func (redo *RedoLog) CrashRecover(pc PageCache, tm TransactionManager) {
 	log.Printf("Recovering undo\n")
 	undoRecovery(toUndo, pc, tm)
 	log.Printf("Recovery finish\n")
-	redo.resetLog()
 }
 
 // redo
@@ -282,6 +287,9 @@ func doInsertRecovery(data []byte, pc PageCache, opt RecoveryType) {
 		if err != nil {
 			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
 		}
+		if err = pc.ReleasePage(pg); err != nil {
+			panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
+		}
 	}
 }
 
@@ -299,6 +307,9 @@ func doUpdateRecovery(data []byte, pc PageCache, opt RecoveryType) {
 		}
 		if err != nil {
 			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
+		}
+		if err = pc.ReleasePage(pg); err != nil {
+			panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
 		}
 	}
 }
@@ -336,7 +347,7 @@ func OpenRedoLog(path string, lock *sync.Mutex) Log {
 		file: file,
 		lock: lock,
 	}
-	redoLog.init()
+	//redoLog.init()
 	return redoLog
 }
 

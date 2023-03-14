@@ -36,20 +36,24 @@ func (list *LinkedList) RemoveFirst() any {
 	ret := list.head.next.val
 	list.head.next = list.head.next.next
 	list.head.next.prev = list.head
+	list.size -= 1
 	return ret
 }
 
 func (list *LinkedList) FindGtAndRemove(target any) any {
 	for curr := list.head.next; curr != list.tail; curr = curr.next {
 		if list.compareFunction(curr, target) >= 0 {
-			curr.removeNode()
+			removeNode(curr)
+			list.size -= 1
 			return curr.val
 		}
 	}
 	return nil
 }
 
-func (node *node) removeNode() {
-	node.prev.next = node.next
-	node.next.prev = node.prev
+func removeNode(node *node) {
+	if node.prev != nil && node.next != nil {
+		node.prev.next = node.next
+		node.next.prev = node.prev
+	}
 }
