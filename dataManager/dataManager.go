@@ -8,13 +8,15 @@ import (
 )
 
 // DataManager 管理PageCache(BufferPool+Data Source), Page Control, RedoLog
+// 上层请求必须保证请求的长度八字节对齐
 
 const PageNumberDbMeta int64 = 1
 
 type DataManager interface {
 	Read(uid int64) DataItem
 	Write(xid int64, data []byte)
-	Insert(xid int64, data []byte)
+	Insert(xid int64, data []byte) int64
+	Release(di DataItem)
 	Close()
 }
 
@@ -37,7 +39,7 @@ func (dm *DmImpl) Read(uid int64) DataItem {
 		if item.IsValid() {
 			return item
 		} else {
-			dm.releaseDataItem(item)
+			dm.Release(item)
 			return nil
 		}
 	}
@@ -52,7 +54,8 @@ func (dm *DmImpl) Write(xid int64, data []byte) {
 // Insert
 // 申请向Page Cache插入一段数据
 // log first and insert next
-func (dm *DmImpl) Insert(xid int64, data []byte) {
+// return uid(pageId, offset)
+func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	// wrap
 	raw := wrapDataItemRaw(data)
 	length := int64(len(raw))
@@ -63,32 +66,37 @@ func (dm *DmImpl) Insert(xid int64, data []byte) {
 	// find a free page by page Ctl
 	var pi *PageInfo
 	pi = dm.pageCtl.Select(length)
+	var pageId int64
 	// if necessarily, create a new page
 	if pi == nil {
-		pageId := dm.pageCache.NewPage(raw, DataPage)
-		// LOG FIRST
-		log := wrapInsertLog(xid, pageId, SzPageType+SzPgUsed, raw)
-		dm.redo.Log(log)
-		dm.pageCtl.AddPageInfo(pageId, MaxFreeSize-length)
-		return
-	}
-	// insert to the page
-	if pg, err := dm.pageCache.GetPage(pi.PageId); err != nil {
-		panic(fmt.Sprintf("Error occurs when getting page, err = %s", err))
+		pageId = dm.pageCache.NewPage(DataPage)
 	} else {
-		offset := pg.GetUsed()
-		// LOG FIRST
-		log := wrapInsertLog(xid, pg.GetId(), offset, raw)
-		dm.redo.Log(log)
-		// update page data
-		if err = pg.Update(raw, offset); err != nil {
-			panic(fmt.Sprintf("Error occurs when updating page, err = %s\n", err))
-		}
-		// update pageCtl
-		dm.pageCtl.AddPageInfo(pg.GetId(), pg.GetFree())
-		if err = dm.pageCache.ReleasePage(pg); err != nil {
-			panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
-		}
+		pageId = pi.PageId
+	}
+	pg, err := dm.pageCache.GetPage(pageId)
+	if err != nil {
+		panic(fmt.Sprintf("Error occurs when getting page, err = %s", err))
+	}
+	offset := pg.GetUsed()
+	// LOG FIRST
+	log := wrapInsertLog(xid, pg.GetId(), offset, raw)
+	dm.redo.Log(log)
+	// update page data
+	if err := pg.Append(raw); err != nil {
+		panic(fmt.Sprintf("Error occurs when updating page, err = %s\n", err))
+	}
+	// update pageCtl
+	dm.pageCtl.AddPageInfo(pg.GetId(), pg.GetFree())
+	if err := dm.pageCache.ReleasePage(pg); err != nil {
+		panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
+	}
+	// release
+	return getUid(pg.GetId(), offset)
+}
+
+func (dm *DmImpl) Release(di DataItem) {
+	if err := dm.pageCache.ReleasePage(di.GetPage()); err != nil {
+		panic(err)
 	}
 }
 
@@ -129,14 +137,8 @@ func (dm *DmImpl) getDataItem(page Page, offset int64) DataItem {
 	dataSize := int64(binary.BigEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
 	raw := data[offset : offset+SzDIValid+SzDIDataSize+dataSize]
 	oldRaw := make([]byte, len(raw))
-	uid := (page.GetId() << 32) | offset
+	uid := getUid(page.GetId(), offset)
 	return NewDataItem(raw, oldRaw, &sync.RWMutex{}, dm, page, uid)
-}
-
-func (dm *DmImpl) releaseDataItem(dataItem DataItem) {
-	if err := dm.pageCache.ReleasePage(dataItem.GetPage()); err != nil {
-		panic(err)
-	}
 }
 
 // uid 高32位为pageId, 低32位为offset
@@ -147,16 +149,19 @@ func uidTrans(uid int64) (pageId, offset int64) {
 	return
 }
 
-func OpenDataManager(path string, memory int64) DataManager {
+func getUid(pageId, offset int64) int64 {
+	return (pageId << 32) | offset
+}
+
+func OpenDataManager(path string, memory int64, tm TransactionManager) DataManager {
 	pc := NewPageCacheRefCountFileSystemImpl(uint32(memory/PageSize), path, &sync.Mutex{})
 	pageCtl := NewPageCtl(&sync.Mutex{}, pc)
 	redo := OpenRedoLog(path, &sync.Mutex{})
-	tx := NewTransactionManagerImpl(path)
 	dm := &DmImpl{
 		pageCache:          pc,
 		pageCtl:            pageCtl,
 		redo:               redo,
-		transactionManager: tx,
+		transactionManager: tm,
 	}
 	dm.init()
 	return dm

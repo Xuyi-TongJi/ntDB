@@ -18,6 +18,7 @@ type DataItem interface {
 	SetInvalid()
 	GetPage() Page
 	GetUid() int64
+	Release()
 
 	// lock
 
@@ -77,6 +78,10 @@ func (di *DataItemImpl) GetUid() int64 {
 	return di.uid
 }
 
+func (di *DataItemImpl) Release() {
+	di.dm.Release(di)
+}
+
 func (di *DataItemImpl) IsValid() bool {
 	return di.raw[0] == 1
 }
@@ -110,7 +115,7 @@ func (di *DataItemImpl) BeforeUpdate(xid int64) {
 }
 
 func (di *DataItemImpl) UndoUpdate(xid int64) {
-	//TODO implement me
+	// TODO implement me
 	panic("implement me")
 }
 

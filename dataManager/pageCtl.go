@@ -67,17 +67,18 @@ func (pi *PageCtlImpl) Select(need int64) *PageInfo {
 	if need > PageSize {
 		panic("Applying for overflowed page size\n")
 	}
-	// 8字节对齐
-	padding := need % 8
-	need += padding
+	var intervalNum int64
 	if need < TinyTHRESHOLD {
 		// < 32Bytes
 		// find a page that is available
 		if result := pi.selectTinyFast(need); result != nil {
 			return result
+		} else {
+			intervalNum = 0
 		}
+	} else {
+		intervalNum = need / THRESHOLD
 	}
-	intervalNum := need / THRESHOLD
 	if intervalNum != INTERVALS {
 		intervalNum += 1
 	}

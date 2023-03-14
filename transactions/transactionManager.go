@@ -34,7 +34,7 @@ type TransactionManager interface {
 }
 
 type TransactionManagerImpl struct {
-	lock       sync.Mutex // 保护新建事物，更新事物状态等操作
+	lock       sync.Mutex
 	file       *os.File
 	xidCounter int64 // xid计数
 }

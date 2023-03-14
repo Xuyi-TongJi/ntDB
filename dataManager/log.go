@@ -27,7 +27,7 @@ type Log interface {
 const (
 	SEED       int    = 1331
 	MOD        int    = 998244353
-	LogSuffix  string = ".log"
+	LogSuffix  string = "_redo.log"
 	SzCheckSum int64  = 4
 	SzData     int64  = 4
 )

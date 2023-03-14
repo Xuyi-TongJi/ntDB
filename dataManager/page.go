@@ -46,7 +46,8 @@ const (
 	PageSize    int64 = 8192 // 8K bytes
 	SzPgUsed    int64 = 4
 	SzPageType  int64 = 4
-	MaxFreeSize int64 = PageSize - SzPgUsed - SzPageType // 数据页面的最大使用空间
+	MaxFreeSize       = PageSize - SzPgUsed - SzPageType // 数据页面的最大使用空间
+	InitOffset        = SzPgUsed + SzPageType
 )
 
 type PageImpl struct {

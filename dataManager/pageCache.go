@@ -3,7 +3,6 @@ package dataManager
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -20,7 +19,7 @@ func init() {
 // 基于页面Page的缓存接口
 
 type PageCache interface {
-	NewPage(data []byte, pageType PageType) int64
+	NewPage(pageType PageType) int64
 	GetPage(pageId int64) (Page, error)
 	ReleasePage(page Page) error
 	SetDsSize(maxPageNumbers int64) error
@@ -55,16 +54,10 @@ func (p *PageCacheImpl) Close() {
 
 // NewPage 新建一个页，并写入数据源
 // Create a new Page and write data, then return the pageId
-func (p *PageCacheImpl) NewPage(data []byte, pt PageType) int64 {
+func (p *PageCacheImpl) NewPage(pt PageType) int64 {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	if int64(len(data)) > PageSize-SzPgUsed-SzPageType {
-		panic("Data length overflow when creating a new page")
-	}
 	newPage := defaultPageFactory.newPage(p.ds, p.pageNumbers.Load()+1, p, pt)
-	if err := newPage.Append(data); err != nil {
-		panic(fmt.Sprintf("Error occurs when creating a page, err = %s\n", err))
-	}
 	p.pageNumbers.Add(1)
 	p.DoFlush(newPage)
 	return p.pageNumbers.Load()
@@ -169,7 +162,7 @@ func NewPageCacheRefCountFileSystemImpl(maxRecourse uint32, path string, lock *s
 	this.pool = bufferPool
 	if this.pageNumbers.Load() < 1 {
 		// set db meta page
-		this.NewPage([]byte{}, DbMetaPage)
+		this.NewPage(DbMetaPage)
 	}
 	return this
 }
