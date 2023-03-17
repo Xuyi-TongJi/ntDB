@@ -63,7 +63,13 @@ func NewDataItem(raw []byte, oldRaw []byte, lock *sync.RWMutex, dm DataManager,
 }
 
 func (di *DataItemImpl) GetData() []byte {
-	return di.raw[SzDIValid+SzDIDataSize:]
+	di.lock.RLock()
+	defer di.lock.RUnlock()
+	data := di.raw[SzDIValid+SzDIDataSize:]
+	// deep copy
+	copyData := make([]byte, len(data))
+	copy(copyData, data)
+	return copyData
 }
 
 func (di *DataItemImpl) GetRaw() []byte {
@@ -111,7 +117,7 @@ func (di *DataItemImpl) RUnLock() {
 }
 
 func (di *DataItemImpl) BeforeUpdate(xid int64) {
-	// TODO
+	// TODO implement me
 }
 
 func (di *DataItemImpl) UndoUpdate(xid int64) {
@@ -126,7 +132,7 @@ func (di *DataItemImpl) AfterUpdate(xid int64) {
 
 // WrapDataItemRaw
 // RAW: [valid]1[dataSize]8[data]
-func wrapDataItemRaw(raw []byte) []byte {
+func WrapDataItemRaw(raw []byte) []byte {
 	size := int64(len(raw))
 	valid := int8(1)
 	buffer := bytes.NewBuffer([]byte{})

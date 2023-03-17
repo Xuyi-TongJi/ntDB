@@ -8,10 +8,5 @@ type ReadView struct {
 	creatorId int64   // the creator XID of this read view
 	maxXid    int64   // the next XID the system will create
 	minXid    int64   // the minimal active XID currently in the system
-	xidList   []int64 // active XID currently in the system
-}
-
-func NewReadView(vm VersionManager, creatorId int64) *ReadView {
-	// TODO
-	return nil
+	active    []int64 // active XID currently in the system
 }

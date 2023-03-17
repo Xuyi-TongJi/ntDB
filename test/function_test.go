@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -23,4 +24,11 @@ func Test2(t *testing.T) {
 	//}
 	_, _ = f.Write(buf)
 	_ = f.Truncate(3)
+}
+
+func Test3(t *testing.T) {
+	var lock sync.Mutex
+	lock.Lock()
+	defer lock.Unlock()
+	lock.Lock()
 }

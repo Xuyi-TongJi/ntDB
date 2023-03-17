@@ -30,6 +30,7 @@ type DmImpl struct {
 
 // Read
 // 根据uid从PC中读取DataItem并校验有效位
+// 可能返回nil
 func (dm *DmImpl) Read(uid int64) DataItem {
 	pageId, offset := uidTrans(uid)
 	if page, err := dm.pageCache.GetPage(pageId); err != nil {
@@ -57,7 +58,7 @@ func (dm *DmImpl) Write(xid int64, data []byte) {
 // return uid(pageId, offset)
 func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	// wrap
-	raw := wrapDataItemRaw(data)
+	raw := WrapDataItemRaw(data)
 	length := int64(len(raw))
 	if length > MaxFreeSize {
 		// 暂不支持跨页存储
