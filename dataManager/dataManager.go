@@ -14,8 +14,9 @@ const PageNumberDbMeta int64 = 1
 
 type DataManager interface {
 	Read(uid int64) DataItem
-	Write(xid int64, data []byte)
+	Update(xid, uid int64, data []byte) int64
 	Insert(xid int64, data []byte) int64
+	Delete(xid, uid int64)
 	Release(di DataItem)
 	Close()
 }
@@ -43,13 +44,38 @@ func (dm *DmImpl) Read(uid int64) DataItem {
 			dm.Release(item)
 			return nil
 		}
+		// TODO 是否需要ReleasePage
 	}
 }
 
-// Write
-func (dm *DmImpl) Write(xid int64, data []byte) {
-	// TODO implement me
-	panic("implement me")
+// Update
+// 更新数据
+// 尝试更新失效的或者不存在的数据时，panic
+// 更新的数据长度小于，原地更新，否则将当前DataItem设置为无效，并且新插入一个DataItem
+// 返回新数据的地址
+// 上层模块保证其操作的安全性（VersionManager）
+func (dm *DmImpl) Update(xid, uid int64, data []byte) int64 {
+	di := dm.Read(uid)
+	if di == nil {
+		panic("Error occurs when updating data item, this data item is invalid")
+	}
+	oldRaw := di.GetRaw()
+	newRaw := WrapDataItemRaw(data)
+	var ret int64
+	if len(oldRaw) >= len(newRaw) {
+		// 原地更新
+		// LOG FIRST
+		dm.redo.UpdateLog(uid, xid, oldRaw, newRaw)
+		di.Update(newRaw)
+		ret = uid
+	} else {
+		// DELETE
+		dm.Delete(xid, uid)
+		// INSERT
+		ret = dm.Insert(xid, data)
+	}
+	di.Release()
+	return ret
 }
 
 // Insert
@@ -80,18 +106,17 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	}
 	offset := pg.GetUsed()
 	// LOG FIRST
-	log := wrapInsertLog(xid, pg.GetId(), offset, raw)
-	dm.redo.Log(log)
+	dm.redo.InsertLog(xid, getUid(pg.GetId(), offset), raw)
 	// update page data
 	if err := pg.Append(raw); err != nil {
 		panic(fmt.Sprintf("Error occurs when updating page, err = %s\n", err))
 	}
 	// update pageCtl
 	dm.pageCtl.AddPageInfo(pg.GetId(), pg.GetFree())
+	// release
 	if err := dm.pageCache.ReleasePage(pg); err != nil {
 		panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
 	}
-	// release
 	return getUid(pg.GetId(), offset)
 }
 
@@ -99,6 +124,22 @@ func (dm *DmImpl) Release(di DataItem) {
 	if err := dm.pageCache.ReleasePage(di.GetPage()); err != nil {
 		panic(err)
 	}
+}
+
+// Delete
+// 删除一个DataItem(set invalid)
+func (dm *DmImpl) Delete(xid, uid int64) {
+	di := dm.Read(uid)
+	if di != nil {
+		// LOG FIRST
+		oldRaw := di.GetRaw()
+		newRaw := make([]byte, len(oldRaw))
+		copy(newRaw, oldRaw)
+		SetRawInvalid(newRaw)
+		dm.redo.UpdateLog(uid, xid, oldRaw, newRaw)
+		di.SetInvalid()
+	}
+	di.Release()
 }
 
 func (dm *DmImpl) Close() {

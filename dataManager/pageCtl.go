@@ -57,7 +57,8 @@ func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
 }
 
 // Select
-// 为need字节空间选择合适的页
+// 为need字节空间选择合适的页并删除
+// Select and remove 操作必须是原子的
 func (pi *PageCtlImpl) Select(need int64) *PageInfo {
 	pi.lock.Lock()
 	defer pi.lock.Lock()

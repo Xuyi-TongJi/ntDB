@@ -14,7 +14,8 @@ type Transaction struct {
 	rv            *ReadView // 读视图
 	autoCommitted bool
 	vm            VersionManager
-	channel       chan struct{}
+	locks         []int64  // 持有的表锁
+	action        []Action // 执行的操作, 用于回滚
 }
 
 func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm VersionManager) *Transaction {
@@ -23,7 +24,6 @@ func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm Vers
 		level:         level,
 		autoCommitted: autoCommitted,
 		vm:            vm,
-		channel:       make(chan struct{}),
 	}
 	if level == ReadRepeatable {
 		// 生成ReadView
@@ -31,3 +31,16 @@ func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm Vers
 	}
 	return tx
 }
+
+type Action struct {
+	aType ActionType
+	uid   int64
+}
+
+type ActionType int64
+
+const (
+	INSERT ActionType = 0
+	UPDATE ActionType = 1
+	DELETE ActionType = 2
+)

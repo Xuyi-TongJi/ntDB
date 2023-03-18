@@ -17,7 +17,9 @@ import (
 // Any error will panic
 
 type Log interface {
-	Log(data []byte) // 记录下一条log
+	UpdateLog(uid, xid int64, oldRaw, raw []byte)
+	InsertLog(uid, xid int64, raw []byte)
+	log(data []byte) // 记录下一条log
 	Close()
 	Next() []byte // 迭代器获得下一条log data
 	ResetLog()
@@ -39,26 +41,38 @@ type RedoLog struct {
 	offset   int64 // current pointer used for iterator
 }
 
-// Log
+func (redo *RedoLog) UpdateLog(uid, xid int64, oldRaw, raw []byte) {
+	pageId, offset := uidTrans(uid)
+	updateLog := wrapUpdateLog(xid, pageId, offset, int64(len(oldRaw)), oldRaw, raw)
+	redo.log(updateLog)
+}
+
+func (redo *RedoLog) InsertLog(uid, xid int64, raw []byte) {
+	pageId, offset := uidTrans(uid)
+	insertLog := wrapInsertLog(xid, pageId, offset, raw)
+	redo.log(insertLog)
+}
+
+// log
 // [Size]4[CheckSum]8[Data] -> log raw format
 // Must flush the wrapped data and then update the checkSum of the redo log file
 // 先写log,最后更新checkSum
-func (redo *RedoLog) Log(data []byte) {
+func (redo *RedoLog) log(data []byte) {
 	redo.lock.Lock()
 	defer redo.lock.Unlock()
 	logWrap := wrapLog(data)
 	// write
-	stat, _ := redo.file.Stat()
-	if _, err := redo.file.WriteAt(logWrap, stat.Size()); err != nil {
-		panic(err)
+	if _, err := redo.file.Write(logWrap); err != nil {
+		panic(fmt.Sprintf("Error occurs when writing redo log, err = %s", err))
 	}
 	// finally update the checkSum
 	nextCheckSum := calcCheckSum(int(redo.checkSum), data)
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, nextCheckSum)
 	if _, err := redo.file.WriteAt(buffer.Bytes(), 0); err != nil {
-		panic(err)
+		panic(fmt.Sprintf("Error occurs when writing redo log, err = %s", err))
 	}
+	redo.checkSum = nextCheckSum
 }
 
 func (redo *RedoLog) Close() {

@@ -1,16 +1,19 @@
 package versionManager
 
 import (
+	"errors"
+	"fmt"
 	"myDB/dataManager"
 	"myDB/transactions"
 	"sync"
+	"time"
 )
 
 type VersionManager interface {
 	Read(xid, uid int64) Record
-	ReadForUpdate(xid, uid int64) Record
-	Insert(xid int64, data []byte) int64
-	Delete(xid, uid int64)
+	ReadForUpdate(xid, uid, tbUid int64) (Record, error)
+	Insert(xid int64, data []byte, tbUid int64) (int64, error)
+	Delete(xid, uid, tbUid int64) error
 	CreateReadView(xid int64) *ReadView // 创建读视图
 
 	Begin(level IsolationLevel, autoCommitted bool) int64
@@ -29,6 +32,11 @@ type VmImpl struct {
 	lock         *sync.RWMutex
 }
 
+const (
+	MetaDataTbUid     int64         = -1
+	SleepTimeUnLocked time.Duration = 50 * time.Millisecond
+)
+
 // Read
 // 快照读 MVCC
 // 没有写权限
@@ -44,7 +52,7 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 	}
 	record := DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, false)
 	// 超级事物创建的
-	if uid == transactions.SuperXID {
+	if record.GetXid() == transactions.SuperXID {
 		return record
 	}
 	for record != nil && !v.checkMvccValid(record, xid) {
@@ -57,23 +65,48 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 // 当前读
 // 具有写权限
 // 真正执行更新操作的是TBM(表和字段管理)
-func (v *VmImpl) ReadForUpdate(xid, uid int64) Record {
-	// TODO implement me
-	return nil
+func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
+	_ = v.getTransaction(xid) // check valid
+	if err := v.tryToLockTable(xid, tbUid); err != nil {
+		return nil, err
+	}
+	di := v.dm.Read(uid)
+	if di == nil {
+		return nil, nil
+	}
+	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, true), nil
 }
 
 // Insert
 // 向DataManager插入数据
+// 可以插入元数据（表，字段信息），也可以插入（索引，数据）
+// 当插入元数据时，tbUid == -1
 // 返回DataItem的uid
-func (v *VmImpl) Insert(xid int64, data []byte) int64 {
-	//TODO implement me
-	panic("implement me")
-
+func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+	// metaData, 不需要获得锁，直接插入
+	if tbUid == MetaDataTbUid {
+		return v.dm.Insert(xid, data), nil
+	}
+	if err := v.tryToLockTable(xid, tbUid); err != nil {
+		return -1, err
+	}
+	return v.dm.Insert(xid, data), nil
 }
 
-func (v *VmImpl) Delete(xid, uid int64) {
-	//TODO implement me
-	panic("implement me")
+func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+	// metaData, 不需要获得锁，直接删除
+	if tbUid == MetaDataTbUid {
+		v.dm.Delete(xid, uid)
+	}
+	if err := v.tryToLockTable(xid, tbUid); err != nil {
+		return err
+	}
+	v.dm.Delete(xid, uid)
+	return nil
 }
 
 func (v *VmImpl) CreateReadView(xid int64) *ReadView {
@@ -155,11 +188,34 @@ func (v *VmImpl) checkMvccValid(record Record, xid int64) bool {
 	return true
 }
 
-func NewVersionManager(path string, memory int64, lock *sync.RWMutex, lt LockTable) VersionManager {
+func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
+	for true {
+		// 成功获取表锁
+		locked, err := v.lt.AddLock(xid, tbUid)
+		if err != nil {
+			// 死锁， 回滚
+			if errors.Is(err, &DeadLockError{}) {
+				v.Abort(xid)
+				return err
+			} else {
+				panic(fmt.Sprintf("Error occurs when reading for update, err = %s", err))
+			}
+		}
+		// 加锁成功
+		if locked {
+			break
+		}
+		time.Sleep(SleepTimeUnLocked)
+	}
+	return nil
+}
+
+func NewVersionManager(path string, memory int64, lock *sync.RWMutex) VersionManager {
 	tm := transactions.NewTransactionManagerImpl(path)
 	dm := dataManager.OpenDataManager(path, memory, tm)
 	undo := OpenUndoLog(path, &sync.Mutex{})
 	// TODO
+	lt := NewLockTable()
 	return &VmImpl{
 		dm: dm, tm: tm, undo: undo, lock: lock,
 		activeTrans: map[int64]*Transaction{},

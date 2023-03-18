@@ -44,8 +44,9 @@ func init() {
 }
 
 type Field interface {
+	GetUid() int64
 	IsIndexed() bool
-	SearchRange(left any, right any) ([]int64, error)
+	Range(left any, right any) ([]int64, error)
 }
 
 // FieldImpl
@@ -72,11 +73,15 @@ type FieldImpl struct {
 	index     indexManager.Index
 }
 
+func (f *FieldImpl) GetUid() int64 {
+	return f.uid
+}
+
 func (f *FieldImpl) IsIndexed() bool {
 	return f.indexUid != 0
 }
 
-func (f *FieldImpl) SearchRange(left any, right any) ([]int64, error) {
+func (f *FieldImpl) Range(left any, right any) ([]int64, error) {
 	if f.IsIndexed() {
 		return f.index.SearchRange(left, right)
 	} else {

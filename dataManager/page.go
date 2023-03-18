@@ -73,6 +73,8 @@ func (p *PageImpl) IsDirty() bool {
 }
 
 func (p *PageImpl) SetDirty(dirty bool) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	p.dirty = dirty
 }
 
@@ -93,6 +95,8 @@ func (p *PageImpl) GetDataSize() int64 {
 }
 
 func (p *PageImpl) SetData(data []byte) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	p.data = data
 }
 
@@ -177,8 +181,8 @@ func (p *PageImpl) Remove(toRem []byte, offset int64) error {
 	currentLength := p.GetUsed()
 	if length+offset == currentLength {
 		p.SetUsed(int32(offset))
+		p.SetDirty(true)
 	}
-	p.SetDirty(true)
 	return nil
 }
 
