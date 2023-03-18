@@ -39,12 +39,12 @@ func (dm *DmImpl) Read(uid int64) DataItem {
 	} else {
 		item := dm.getDataItem(page, offset)
 		if item.IsValid() {
+			dm.Release(item)
 			return item
 		} else {
 			dm.Release(item)
 			return nil
 		}
-		// TODO 是否需要ReleasePage
 	}
 }
 

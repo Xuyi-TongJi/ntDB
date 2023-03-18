@@ -11,7 +11,8 @@ import (
 
 type VersionManager interface {
 	Read(xid, uid int64) Record
-	ReadForUpdate(xid, uid, tbUid int64) (Record, error)
+	ReadForUpdate(xid, uid, tbUid int64) (Record, error) // ReadForUpdate 当前读
+	Update(xid, uid, tbUid int64, newData []byte) error  // Update 更新
 	Insert(xid int64, data []byte, tbUid int64) (int64, error)
 	Delete(xid, uid, tbUid int64) error
 	CreateReadView(xid int64) *ReadView // 创建读视图
@@ -34,7 +35,7 @@ type VmImpl struct {
 
 const (
 	MetaDataTbUid     int64         = -1
-	SleepTimeUnLocked time.Duration = 50 * time.Millisecond
+	SleepTimeUnLocked time.Duration = 20 * time.Millisecond
 )
 
 // Read
@@ -77,14 +78,27 @@ func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, true), nil
 }
 
+func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) error {
+	_ = v.getTransaction(xid) // check valid
+	// readForUpdate 获取表锁
+	if record, err := v.ReadForUpdate(xid, uid, tbUid); err != nil {
+		return err
+	} else {
+		// undoLog
+		rollback := v.undo.Log(record.GetRaw())
+		newRecordRaw := WrapRecordRaw(newData, xid, rollback)
+		v.dm.Update(xid, uid, newRecordRaw)
+		return nil
+	}
+}
+
 // Insert
 // 向DataManager插入数据
-// 可以插入元数据（表，字段信息），也可以插入（索引，数据）
+// 可以插入元数据（插入表Table信息），也可以插入（索引，数据，字段信息），后者要先获取表锁
 // 当插入元数据时，tbUid == -1
 // 返回DataItem的uid
 func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
-	v.lock.Lock()
-	defer v.lock.Unlock()
+	_ = v.getTransaction(xid) // check valid
 	// metaData, 不需要获得锁，直接插入
 	if tbUid == MetaDataTbUid {
 		return v.dm.Insert(xid, data), nil
@@ -92,12 +106,12 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return -1, err
 	}
+	// xid已经取得表锁，不需要继续加v锁
 	return v.dm.Insert(xid, data), nil
 }
 
 func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
-	v.lock.Lock()
-	defer v.lock.Unlock()
+	_ = v.getTransaction(xid) // check valid
 	// metaData, 不需要获得锁，直接删除
 	if tbUid == MetaDataTbUid {
 		v.dm.Delete(xid, uid)
@@ -105,6 +119,7 @@ func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return err
 	}
+	// xid已经取得表锁，不需要继续加v锁
 	v.dm.Delete(xid, uid)
 	return nil
 }
@@ -143,10 +158,24 @@ func (v *VmImpl) Begin(level IsolationLevel, autoCommitted bool) int64 {
 // 释放该事物持有的所有锁
 // 更新vm状态
 func (v *VmImpl) Commit(xid int64) {
+	_ = v.getTransaction(xid) // check Valid
 	v.lock.Lock()
 	defer v.lock.Unlock()
-	//TODO implement me
-	panic("implement me")
+	v.lt.RemoveLock(xid)
+	delete(v.activeTrans, xid)
+	if xid == v.minActiveXid {
+		nextXid := xid + 1
+		for true {
+			if _, ext := v.activeTrans[nextXid]; !ext {
+				nextXid += 1
+			} else {
+				v.minActiveXid = nextXid
+				break
+			}
+		}
+	}
+	// tm
+	v.tm.Commit(xid)
 }
 
 // Abort
@@ -214,7 +243,6 @@ func NewVersionManager(path string, memory int64, lock *sync.RWMutex) VersionMan
 	tm := transactions.NewTransactionManagerImpl(path)
 	dm := dataManager.OpenDataManager(path, memory, tm)
 	undo := OpenUndoLog(path, &sync.Mutex{})
-	// TODO
 	lt := NewLockTable()
 	return &VmImpl{
 		dm: dm, tm: tm, undo: undo, lock: lock,

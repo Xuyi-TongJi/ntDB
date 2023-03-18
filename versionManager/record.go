@@ -25,6 +25,7 @@ func init() {
 }
 
 type Record interface {
+	GetRaw() []byte
 	GetData() []byte
 	GetUid() int64 // uid record所在dataItem的pageId和offset
 	GetXid() int64
@@ -36,19 +37,23 @@ type Record interface {
 
 type RecordImpl struct {
 	di       dataManager.DataItem // [valid]1[length]8[data] --> data:record raw
-	raw      []byte
+	raw      []byte               // raw是DataItem中的DATA段的深拷贝，直接修改raw不会修改DataItem中的数据
 	vm       VersionManager
 	uid      int64 // [pageID, offset] of DataItem
 	undo     Log
-	writable bool // 是否对其具有写权限(快照读没有写权限，当前读具有写权限)
+	writable bool // 是否对其具有写权限(快照读没有写权限，当前读具有写权限) // TODO 该字段可以删除
+}
+
+// GetRaw 获取record中的数据
+// 对DataItem中的data进行深拷贝
+func (record *RecordImpl) GetRaw() []byte {
+	return record.raw
 }
 
 // GetData 获取record中的数据
 // 对DataItem中的data进行深拷贝
 func (record *RecordImpl) GetData() []byte {
-	//data := record.getDataItemData()
-	//return data[SzRcData+SzRcXid+SzRcRollBack:]
-	return record.raw
+	return record.raw[SzRcRollBack+SzRcXid+SzRcData:]
 }
 
 func (record *RecordImpl) GetUid() int64 {
@@ -86,6 +91,10 @@ func (record *RecordImpl) IsSnapShot() bool {
 type SnapShot struct {
 	raw  []byte
 	undo Log
+}
+
+func (s *SnapShot) GetRaw() []byte {
+	return s.raw
 }
 
 func (s *SnapShot) GetData() []byte {
