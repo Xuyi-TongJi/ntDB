@@ -1,6 +1,8 @@
 package dataManager
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -10,6 +12,7 @@ type DataSource interface {
 	FlushBackToDataSource(obj PoolObj) error
 	Truncate(size int64) error
 	Close() error
+	GetDataLength() int64
 }
 
 // FileSystemDataSource
@@ -19,19 +22,32 @@ type FileSystemDataSource struct {
 	lock *sync.Mutex
 }
 
+const (
+	FileSuffix string = ".fds"
+)
+
 type FileSystemObj interface {
 	PoolObj
 	GetOffset() int64
 }
 
 func NewFileSystemDataSource(path string, lock *sync.Mutex) DataSource {
-	f, err := os.OpenFile(path, os.O_RDWR, 0666)
+	f, err := os.OpenFile(path+FileSuffix, os.O_RDWR, 0666)
 	if err != nil {
-		panic(err)
+		if errors.Is(err, os.ErrNotExist) {
+			f, err = os.Create(path + FileSuffix)
+			if err != nil {
+				panic(err)
+			}
+		} else {
+			panic(err)
+		}
 	}
-	return &FileSystemDataSource{
+	fsd := &FileSystemDataSource{
 		file: f,
+		lock: lock,
 	}
+	return fsd
 }
 
 // GetFromDataSource
@@ -70,4 +86,15 @@ func (ch *FileSystemDataSource) Truncate(size int64) error {
 
 func (ch *FileSystemDataSource) Close() error {
 	return ch.file.Close()
+}
+
+func (ch *FileSystemDataSource) GetDataLength() int64 {
+	stat, _ := ch.file.Stat()
+	return stat.Size()
+}
+
+// Debug only for debugging
+func (ch *FileSystemDataSource) Debug() {
+	stat, _ := ch.file.Stat()
+	fmt.Println(stat.Size())
 }

@@ -3,5 +3,5 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Println(1 << 16)
+	fmt.Printf("hello, 赵东亮\n")
 }

@@ -3,6 +3,7 @@ package transactions
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"sync"
 )
@@ -10,9 +11,10 @@ import (
 // 事物的状态
 
 const (
+	FINISH          int    = 7
 	ACTIVE          byte   = 0
-	COMMITTED       byte   = 1
-	ABORTED         byte   = 2
+	COMMITTED       byte   = 1 | (1 << FINISH)
+	ABORTED         byte   = 2 | (1 << FINISH)
 	SuperXID        int64  = 0      // 超级事物的xid为0，其永远为提交状态
 	XidFileSuffix   string = ".xid" // xid文件后缀
 	XidStatusSize   int64  = 1      // 每个事物用1个字节(byte)记录
@@ -28,18 +30,24 @@ type TransactionManager interface {
 	Commit(xid int64)
 	Abort(xid int64)
 	Status(xid int64) byte
-	close()
+	Close()
 }
 
 type TransactionManagerImpl struct {
-	lock       sync.Mutex // 保护新建事物，更新事物状态等操作
+	lock       sync.Mutex
 	file       *os.File
 	xidCounter int64 // xid计数
 }
 
 func NewTransactionManagerImpl(path string) TransactionManager {
-	file, err := os.OpenFile(path, os.O_RDWR, 0666)
-	if err != nil {
+	var file *os.File
+	file, err := os.OpenFile(path+XidFileSuffix, os.O_RDWR, 0666)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		file, err = os.Create(path + XidFileSuffix)
+		if err != nil {
+			panic(err)
+		}
+	} else if err != nil {
 		panic(err)
 	}
 	t := &TransactionManagerImpl{
@@ -123,7 +131,7 @@ func (t *TransactionManagerImpl) Status(xid int64) byte {
 	return buf[0]
 }
 
-func (t *TransactionManagerImpl) close() {
+func (t *TransactionManagerImpl) Close() {
 	if err := t.file.Close(); err != nil {
 		panic(err)
 	}
