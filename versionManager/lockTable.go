@@ -6,8 +6,8 @@ import "sync"
 // 用于死锁检测
 
 type LockTable interface {
-	AddLock(xid, tbUid int64) (bool, error) // 事物xid对tb加锁
-	RemoveLock(xid int64)                   // remove事物xid上的所有锁
+	AddLock(xid, tbUid, lastOwner int64) (bool, int64, error) // 事物xid对tb加锁
+	RemoveLock(xid int64)                                     // remove事物xid上的所有锁
 	checkDeadLock() bool
 }
 
@@ -26,7 +26,7 @@ func (err *DeadLockError) Error() string {
 
 // AddLock
 // 事物xid对tbUid加锁(表锁)
-func (lt *LockTableImpl) AddLock(xid, tbUid int64) (bool, error) {
+func (lt *LockTableImpl) AddLock(xid, tbUid, lastOwner int64) (bool, int64, error) {
 	lt.lock.Lock()
 	defer lt.lock.Unlock()
 	// 锁是否有owner
@@ -35,20 +35,24 @@ func (lt *LockTableImpl) AddLock(xid, tbUid int64) (bool, error) {
 		owner := lt.lockStatus[tbUid]
 		// owner是本身，发生可重入
 		if owner == xid {
-			return true, nil
+			return true, owner, nil
+		}
+		// 上次获取锁时，owner未改变, 上一次通过了死锁检测，这一次不需要检测(已经有owner->xid这条边)
+		if owner == lastOwner {
+			return false, owner, nil
 		}
 		lt.lockEdge[owner] = append(lt.lockEdge[owner], xid)
 		if lt.checkDeadLock() {
 			lt.lockEdge[owner] = append(lt.lockEdge[owner][:len(lt.lockEdge[owner])-1])
-			return false, &DeadLockError{}
+			return false, owner, &DeadLockError{}
 		} else {
-			return false, nil
+			return false, owner, nil
 		}
 	} else {
 		// 没有owner 加锁成功
 		lt.lockStatus[tbUid] = xid
 		lt.locks[xid] = append(lt.locks[xid], tbUid)
-		return true, nil
+		return true, xid, nil
 	}
 }
 

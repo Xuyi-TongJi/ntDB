@@ -15,7 +15,7 @@ type DataItem interface {
 	GetData() []byte
 	GetDataLength() int64
 	GetRaw() []byte
-	//GetOldRaw() []byte
+
 	IsValid() bool
 	SetInvalid()
 	GetPage() Page
@@ -23,12 +23,14 @@ type DataItem interface {
 	Release()
 	Update(newRaw []byte)
 
+	// Deprecated
 	// lock
 
 	//Lock()
 	//UnLock()
 	//RLock()
 	//RUnLock()
+	//GetOldRaw() []byte
 
 	// update
 	//BeforeUpdate(xid int64)
@@ -44,7 +46,7 @@ type DataItemImpl struct {
 	dm   DataManager
 	raw  []byte // raw是Page[offset:offset+raw_length]的一段切片，修改raw将直接修改page上的数据
 	//oldRaw []byte
-	lock *sync.RWMutex // 保留字段
+	lock *sync.RWMutex // 保留字段，可以移除
 }
 
 const (
@@ -62,7 +64,7 @@ func NewDataItem(raw []byte, oldRaw []byte, lock *sync.RWMutex, dm DataManager,
 		dm:   dm,
 		raw:  raw,
 		//oldRaw: oldRaw, // 暂时移除
-		lock: lock,
+		lock: lock, // 可以移除
 	}
 }
 
@@ -110,7 +112,7 @@ func (di *DataItemImpl) Release() {
 }
 
 func (di *DataItemImpl) IsValid() bool {
-	return di.raw[0] == 1
+	return di.raw[0] == DIValid
 }
 
 // SetInvalid
@@ -174,7 +176,6 @@ func (di *DataItemImpl) Update(newRaw []byte) {
 // 8字节对齐
 func WrapDataItemRaw(raw []byte) []byte {
 	size := int64(len(raw))
-	//valid := int8(1)
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, DIValid)
 	_ = binary.Write(buffer, binary.BigEndian, size)

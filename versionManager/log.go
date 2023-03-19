@@ -45,6 +45,7 @@ func (undo *UndoLog) Read(offset int64) []byte {
 
 // Log
 // append a log in undo log and return the offset of the log
+// data -> log data
 func (undo *UndoLog) Log(data []byte) int64 {
 	undo.lock.Lock()
 	defer undo.lock.Unlock()
@@ -56,13 +57,6 @@ func (undo *UndoLog) Log(data []byte) int64 {
 		undo.offset += int64(n)
 	}
 	return ret
-}
-
-func wrapUndoLog(data []byte) []byte {
-	length := len(data)
-	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.BigEndian, int64(length))
-	return append(buffer.Bytes(), data...)
 }
 
 func OpenUndoLog(path string, lock *sync.Mutex) Log {
@@ -79,6 +73,13 @@ func OpenUndoLog(path string, lock *sync.Mutex) Log {
 		offset: stat.Size(),
 	}
 	return undo
+}
+
+func wrapUndoLog(data []byte) []byte {
+	length := len(data)
+	buffer := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer, binary.BigEndian, int64(length))
+	return append(buffer.Bytes(), data...)
 }
 
 func createUndoLog(path string, lock *sync.Mutex) Log {

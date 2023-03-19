@@ -11,9 +11,9 @@ import (
 
 type VersionManager interface {
 	Read(xid, uid int64) Record
-	ReadForUpdate(xid, uid, tbUid int64) (Record, error) // ReadForUpdate 当前读
-	Update(xid, uid, tbUid int64, newData []byte) error  // Update 更新
-	Insert(xid int64, data []byte, tbUid int64) (int64, error)
+	ReadForUpdate(xid, uid, tbUid int64) (Record, error)         // ReadForUpdate 当前读
+	Update(xid, uid, tbUid int64, newData []byte) (int64, error) // Update 更新 返回更新后的uid
+	Insert(xid int64, data []byte, tbUid int64) (int64, error)   // Insert 返回插入位置(uid)
 	Delete(xid, uid, tbUid int64) error
 	CreateReadView(xid int64) *ReadView // 创建读视图
 
@@ -78,17 +78,18 @@ func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, true), nil
 }
 
-func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) error {
-	_ = v.getTransaction(xid) // check valid
+func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
+	tran := v.getTransaction(xid) // check valid
 	// readForUpdate 获取表锁
 	if record, err := v.ReadForUpdate(xid, uid, tbUid); err != nil {
-		return err
+		return -1, err
 	} else {
 		// undoLog
 		rollback := v.undo.Log(record.GetRaw())
 		newRecordRaw := WrapRecordRaw(newData, xid, rollback)
-		v.dm.Update(xid, uid, newRecordRaw)
-		return nil
+		newUid := v.dm.Update(xid, uid, newRecordRaw)
+		tran.AddUpdate(uid, newUid, record.GetRaw(), newRecordRaw)
+		return newUid, err
 	}
 }
 
@@ -98,7 +99,7 @@ func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) error {
 // 当插入元数据时，tbUid == -1
 // 返回DataItem的uid
 func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
-	_ = v.getTransaction(xid) // check valid
+	tran := v.getTransaction(xid) // check valid
 	// metaData, 不需要获得锁，直接插入
 	if tbUid == MetaDataTbUid {
 		return v.dm.Insert(xid, data), nil
@@ -107,11 +108,13 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 		return -1, err
 	}
 	// xid已经取得表锁，不需要继续加v锁
-	return v.dm.Insert(xid, data), nil
+	uid := v.dm.Insert(xid, data)
+	tran.AddInsert(uid)
+	return uid, nil
 }
 
 func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
-	_ = v.getTransaction(xid) // check valid
+	tran := v.getTransaction(xid) // check valid
 	// metaData, 不需要获得锁，直接删除
 	if tbUid == MetaDataTbUid {
 		v.dm.Delete(xid, uid)
@@ -121,6 +124,7 @@ func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
 	}
 	// xid已经取得表锁，不需要继续加v锁
 	v.dm.Delete(xid, uid)
+	tran.AddDelete(uid)
 	return nil
 }
 
@@ -158,7 +162,7 @@ func (v *VmImpl) Begin(level IsolationLevel, autoCommitted bool) int64 {
 // 释放该事物持有的所有锁
 // 更新vm状态
 func (v *VmImpl) Commit(xid int64) {
-	_ = v.getTransaction(xid) // check Valid
+	v.checkXidActive(xid) // check Valid
 	v.lock.Lock()
 	defer v.lock.Unlock()
 	v.lt.RemoveLock(xid)
@@ -183,10 +187,13 @@ func (v *VmImpl) Commit(xid int64) {
 // 释放该事物持有的所有锁
 // 更新vm状态
 func (v *VmImpl) Abort(xid int64) {
+	_ = v.getTransaction(xid) // check Valid
 	v.lock.Lock()
 	defer v.lock.Unlock()
-	//TODO implement me
-	panic("implement me")
+	// TODO implement me
+
+	// tm
+	v.tm.Abort(xid)
 }
 
 func (v *VmImpl) getTransaction(xid int64) *Transaction {
@@ -196,6 +203,14 @@ func (v *VmImpl) getTransaction(xid int64) *Transaction {
 		panic("Error occurs when getting transaction, this is an inactive transaction")
 	} else {
 		return ret
+	}
+}
+
+// checkXidActive
+// 检测
+func (v *VmImpl) checkXidActive(xid int64) {
+	if _, ext := v.activeTrans[xid]; !ext {
+		panic("Error occurs when getting transaction, this is an inactive transaction")
 	}
 }
 
@@ -218,9 +233,10 @@ func (v *VmImpl) checkMvccValid(record Record, xid int64) bool {
 }
 
 func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
+	var lastOwner int64 = -1
 	for true {
 		// 成功获取表锁
-		locked, err := v.lt.AddLock(xid, tbUid)
+		locked, last, err := v.lt.AddLock(xid, tbUid, lastOwner)
 		if err != nil {
 			// 死锁， 回滚
 			if errors.Is(err, &DeadLockError{}) {
@@ -234,6 +250,7 @@ func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
 		if locked {
 			break
 		}
+		lastOwner = last
 		time.Sleep(SleepTimeUnLocked)
 	}
 	return nil

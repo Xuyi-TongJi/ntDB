@@ -16,7 +16,6 @@ type Page interface {
 	Unlock()
 	Append(toAdd []byte) error              // 插入数据
 	Update(toUp []byte, offset int64) error // 更新数据
-	Remove(toRem []byte, offset int64) error
 	CheckInitVersion() bool
 	InitVersion()
 	UpdateVersion()
@@ -26,6 +25,8 @@ type Page interface {
 	GetPageType() PageType
 	IsMetaPage() bool
 	IsDataPage() bool
+
+	// Remove(toRem []byte, offset int64) error // Remove 删除数据
 }
 
 type PageType int32
@@ -51,7 +52,7 @@ const (
 )
 
 type PageImpl struct {
-	lock   sync.Mutex
+	lock   sync.RWMutex
 	data   []byte
 	dirty  bool
 	pageId int64
@@ -160,7 +161,7 @@ func (p *PageImpl) Append(toAdd []byte) error {
 // Update 更新数据页的数据
 func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	p.Lock()
-	defer p.Lock()
+	defer p.Unlock()
 	length := int64(len(toUp))
 	if length+offset > PageSize {
 		return &ErrorPageOverFlow{}
@@ -174,30 +175,36 @@ func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	return nil
 }
 
-func (p *PageImpl) Remove(toRem []byte, offset int64) error {
-	p.Lock()
-	defer p.Lock()
-	length := int64(len(toRem))
-	currentLength := p.GetUsed()
-	if length+offset == currentLength {
-		p.SetUsed(int32(offset))
-		p.SetDirty(true)
-	}
-	return nil
-}
+//func (p *PageImpl) Remove(toRem []byte, offset int64) error {
+//	p.Lock()
+//	defer p.Lock()
+//	length := int64(len(toRem))
+//	currentLength := p.GetUsed()
+//	if length+offset == currentLength {
+//		p.SetUsed(int32(offset))
+//		p.SetDirty(true)
+//	}
+//	return nil
+//}
 
 func (p *PageImpl) GetUsed() int64 {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 	buf := p.GetData()[:SzPgUsed]
 	return int64(binary.BigEndian.Uint32(buf))
 }
 
 func (p *PageImpl) SetUsed(used int32) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	buf := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buf, binary.BigEndian, used)
 	copy(p.GetData()[:SzPgUsed], buf.Bytes())
 }
 
 func (p *PageImpl) GetFree() int64 {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 	return PageSize - p.GetUsed()
 }
 

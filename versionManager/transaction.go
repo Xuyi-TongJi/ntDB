@@ -14,8 +14,8 @@ type Transaction struct {
 	rv            *ReadView // 读视图
 	autoCommitted bool
 	vm            VersionManager
-	locks         []int64  // 持有的表锁
-	action        []Action // 执行的操作, 用于回滚
+	locks         []int64   // 持有的表锁
+	action        []*Action // 执行的操作, 用于回滚
 }
 
 func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm VersionManager) *Transaction {
@@ -33,8 +33,11 @@ func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm Vers
 }
 
 type Action struct {
-	aType ActionType
-	uid   int64
+	aType  ActionType
+	oldUid int64
+	oldRaw []byte
+	newUid int64
+	newRaw []byte
 }
 
 type ActionType int64
@@ -44,3 +47,30 @@ const (
 	UPDATE ActionType = 1
 	DELETE ActionType = 2
 )
+
+func (t *Transaction) AddUpdate(oldUid, newUid int64, oldRaw, newRaw []byte) {
+	action := &Action{
+		aType:  UPDATE,
+		oldUid: oldUid,
+		oldRaw: oldRaw,
+		newUid: newUid,
+		newRaw: newRaw,
+	}
+	t.action = append(t.action, action)
+}
+
+func (t *Transaction) AddDelete(uid int64) {
+	action := &Action{
+		aType:  DELETE,
+		newUid: uid,
+	}
+	t.action = append(t.action, action)
+}
+
+func (t *Transaction) AddInsert(uid int64) {
+	action := &Action{
+		aType:  INSERT,
+		newUid: uid,
+	}
+	t.action = append(t.action, action)
+}

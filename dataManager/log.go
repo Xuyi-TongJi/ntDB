@@ -49,7 +49,9 @@ func (redo *RedoLog) UpdateLog(uid, xid int64, oldRaw, raw []byte) {
 
 func (redo *RedoLog) InsertLog(uid, xid int64, raw []byte) {
 	pageId, offset := uidTrans(uid)
-	insertLog := wrapInsertLog(xid, pageId, offset, raw)
+	// Insert 本质 INVALID -> VALID
+	oldRaw := SetRawInvalid(raw)
+	insertLog := wrapUpdateLog(xid, pageId, offset, int64(len(oldRaw)), oldRaw, raw)
 	redo.log(insertLog)
 }
 
@@ -201,8 +203,8 @@ func NewTransactionMap() TransactionMap {
 }
 
 const (
-	UPDATE   OperationType = 0 // DELETE is essentially a UPDATE operation
-	INSERT   OperationType = 1
+	UPDATE   OperationType = 0 // INSERT, DELETE is essentially a UPDATE operation
+	INSERT   OperationType = 1 // unnecessary
 	SzOpt    int           = 4
 	SzXid    int           = 8
 	SzPageId int           = 8
@@ -261,8 +263,6 @@ func redoRecovery(tx TransactionMap, pc PageCache) {
 			opt := getOperationType(lg)
 			if opt == UPDATE {
 				doUpdateRecovery(lg, pc, REDO)
-			} else {
-				doInsertRecovery(lg, pc, REDO)
 			}
 		}
 	}
@@ -277,8 +277,6 @@ func undoRecovery(tx TransactionMap, pc PageCache, tm TransactionManager) {
 			opt := getOperationType(logs[i])
 			if opt == UPDATE {
 				doUpdateRecovery(logs[i], pc, UNDO)
-			} else {
-				doInsertRecovery(logs[i], pc, UNDO)
 			}
 		}
 		// set aborted
@@ -286,26 +284,28 @@ func undoRecovery(tx TransactionMap, pc PageCache, tm TransactionManager) {
 	}
 }
 
-// doInsertRecovery 执行插入操作
-func doInsertRecovery(data []byte, pc PageCache, opt RecoveryType) {
-	_, pageId, offset, raw := parseInsertLog(data)
-	if pg, err := pc.GetPage(pageId); err != nil {
-		panic(fmt.Sprintf("Error occurs when getting page, err = %s\n", err))
-	} else {
-		var err error
-		if opt == REDO {
-			err = pg.Update(raw, offset)
-		} else {
-			err = pg.Remove(raw, offset)
-		}
-		if err != nil {
-			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
-		}
-		if err = pc.ReleasePage(pg); err != nil {
-			panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
-		}
-	}
-}
+//// doInsertRecovery 执行插入操作
+//func doInsertRecovery(data []byte, pc PageCache, opt RecoveryType) {
+//	// TODO
+//	_, pageId, offset, raw, oldRaw := parseInsertLog(data)
+//	if pg, err := pc.GetPage(pageId); err != nil {
+//		panic(fmt.Sprintf("Error occurs when getting page, err = %s\n", err))
+//	} else {
+//		var err error
+//		if opt == REDO {
+//			err = pg.Update(raw, offset)
+//		} else {
+//			// TODO INSERT如何撤销
+//			err = pg.Remove(raw, offset)
+//		}
+//		if err != nil {
+//			panic(fmt.Sprintf("Error occurs when recoving data, err = %s\n", err))
+//		}
+//		if err = pc.ReleasePage(pg); err != nil {
+//			panic(fmt.Sprintf("Error occurs when releasing page, err = %s\n", err))
+//		}
+//	}
+//}
 
 // doUpdateRecovery 执行更新恢复操作
 func doUpdateRecovery(data []byte, pc PageCache, opt RecoveryType) {
@@ -315,8 +315,10 @@ func doUpdateRecovery(data []byte, pc PageCache, opt RecoveryType) {
 	} else {
 		var err error
 		if opt == REDO {
+			// REDO
 			err = pg.Update(newRaw, offset)
 		} else {
+			// UNDO
 			err = pg.Update(oldRaw, offset)
 		}
 		if err != nil {
@@ -404,24 +406,25 @@ func getPageId(data []byte) int64 {
 	return int64(binary.BigEndian.Uint64(data[SzOpt+SzXid : SzOpt+SzXid+SzPageId]))
 }
 
-func wrapInsertLog(xid, pageId, offset int64, raw []byte) []byte {
-	buffer := bytes.NewBuffer(make([]byte, 0))
-	_ = binary.Write(buffer, binary.BigEndian, int32(INSERT))
-	_ = binary.Write(buffer, binary.BigEndian, xid)
-	_ = binary.Write(buffer, binary.BigEndian, pageId)
-	_ = binary.Write(buffer, binary.BigEndian, offset)
-	_ = binary.Write(buffer, binary.BigEndian, raw)
-	return buffer.Bytes()
-}
+// Unnecessary
+//func wrapInsertLog(xid, pageId, offset int64, raw []byte) []byte {
+//	buffer := bytes.NewBuffer(make([]byte, 0))
+//	_ = binary.Write(buffer, binary.BigEndian, int32(INSERT))
+//	_ = binary.Write(buffer, binary.BigEndian, xid)
+//	_ = binary.Write(buffer, binary.BigEndian, pageId)
+//	_ = binary.Write(buffer, binary.BigEndian, offset)
+//	_ = binary.Write(buffer, binary.BigEndian, raw)
+//	return buffer.Bytes()
+//}
 
-func parseInsertLog(data []byte) (xid, pageId, offset int64, raw []byte) {
-	data = data[SzOpt:]
-	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
-	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
-	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
-	raw = data[SzXid+SzPageId+SzOffset:]
-	return
-}
+//func parseInsertLog(data []byte) (xid, pageId, offset int64, raw []byte) {
+//	data = data[SzOpt:]
+//	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
+//	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
+//	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
+//	raw = data[SzXid+SzPageId+SzOffset:]
+//	return
+//}
 
 func wrapUpdateLog(xid, pageId, offset, oldRawLength int64, oldRaw, newRaw []byte) []byte {
 	buffer := bytes.NewBuffer(make([]byte, 0))
