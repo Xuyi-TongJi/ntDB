@@ -18,6 +18,7 @@ type DataItem interface {
 
 	IsValid() bool
 	SetInvalid()
+	SetValid()
 	GetPage() Page
 	GetUid() int64
 	Release()
@@ -122,6 +123,11 @@ func (di *DataItemImpl) SetInvalid() {
 	copy(di.raw[:SzDIValid], []byte{DIInvalid})
 }
 
+func (di *DataItemImpl) SetValid() {
+	di.page.SetDirty(true)
+	copy(di.raw[:SzDIValid], []byte{DIValid})
+}
+
 func (di *DataItemImpl) GetPage() Page {
 	return di.page
 }
@@ -190,5 +196,10 @@ func WrapDataItemRaw(raw []byte) []byte {
 
 func SetRawInvalid(raw []byte) []byte {
 	copy(raw[:SzDIValid], []byte{DIInvalid})
+	return raw
+}
+
+func SetRawValid(raw []byte) []byte {
+	copy(raw[:SzDIValid], []byte{DIValid})
 	return raw
 }

@@ -9,13 +9,14 @@ type LockTable interface {
 	AddLock(xid, tbUid, lastOwner int64) (bool, int64, error) // 事物xid对tb加锁
 	RemoveLock(xid int64)                                     // remove事物xid上的所有锁
 	checkDeadLock() bool
+	alreadyOwnLock(xid, tbUid int64) bool
 }
 
 type LockTableImpl struct {
 	locks      map[int64][]int64 // xid -> tbUid
 	lockStatus map[int64]int64   // tbUid -> owner(xid)
 	lockEdge   map[int64][]int64 // xid1 -> xid2 (xid2 is waiting for xid1)
-	lock       sync.Mutex
+	lock       sync.RWMutex
 }
 
 type DeadLockError struct{}
@@ -27,6 +28,10 @@ func (err *DeadLockError) Error() string {
 // AddLock
 // 事物xid对tbUid加锁(表锁)
 func (lt *LockTableImpl) AddLock(xid, tbUid, lastOwner int64) (bool, int64, error) {
+	// owner是本身，发生可重入
+	if lt.alreadyOwnLock(xid, tbUid) {
+		return true, xid, nil
+	}
 	lt.lock.Lock()
 	defer lt.lock.Unlock()
 	// 锁是否有owner
@@ -101,6 +106,16 @@ func (lt *LockTableImpl) checkDeadLock() bool {
 		}
 	}
 	return cnt == len(all)
+}
+
+func (lt *LockTableImpl) alreadyOwnLock(xid, tbUid int64) bool {
+	lt.lock.RLock()
+	defer lt.lock.RUnlock()
+	if _, ext := lt.lockStatus[tbUid]; ext {
+		return lt.lockStatus[tbUid] == xid
+	} else {
+		return false
+	}
 }
 
 func NewLockTable() LockTable {

@@ -62,7 +62,7 @@ func (t *Transaction) AddUpdate(oldUid, newUid int64, oldRaw, newRaw []byte) {
 func (t *Transaction) AddDelete(uid int64) {
 	action := &Action{
 		aType:  DELETE,
-		newUid: uid,
+		oldUid: uid,
 	}
 	t.action = append(t.action, action)
 }

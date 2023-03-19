@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 )
@@ -41,11 +40,11 @@ func TestLock(t *testing.T) {
 //	fmt.Println(string(page.GetData()[:11]))
 //}
 
-func TestFile(t *testing.T) {
-	file, _ := os.OpenFile("test.txt", os.O_RDWR, 0666)
-	_, _ = file.WriteAt([]byte("hello world"), 10)
-	err := file.Truncate(0)
-	if err != nil {
-		return
-	}
-}
+//func TestFile(t *testing.T) {
+//	file, _ := os.OpenFile("test.txt", os.O_RDWR, 0666)
+//	_, _ = file.WriteAt([]byte("hello world"), 10)
+//	err := file.Truncate(0)
+//	if err != nil {
+//		return
+//	}
+//}

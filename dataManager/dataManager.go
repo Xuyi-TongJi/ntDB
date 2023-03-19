@@ -17,6 +17,7 @@ type DataManager interface {
 	Update(xid, uid int64, data []byte) int64
 	Insert(xid int64, data []byte) int64
 	Delete(xid, uid int64)
+	Recover(xid, uid int64) // 回复删除(set valid)
 	Release(di DataItem)
 	Close()
 }
@@ -128,6 +129,7 @@ func (dm *DmImpl) Release(di DataItem) {
 
 // Delete
 // 删除一个DataItem(set invalid)
+// 对于已经删除的DI，不进行任何操作
 func (dm *DmImpl) Delete(xid, uid int64) {
 	di := dm.Read(uid)
 	if di != nil {
@@ -140,6 +142,28 @@ func (dm *DmImpl) Delete(xid, uid int64) {
 		di.SetInvalid()
 	}
 	di.Release()
+}
+
+// Recover
+// 恢复已经删除的DataItem (set valid)
+// 对于已经valid的DI，不进行任何操作
+func (dm *DmImpl) Recover(xid, uid int64) {
+	pageId, offset := uidTrans(uid)
+	if page, err := dm.pageCache.GetPage(pageId); err != nil {
+		panic(fmt.Sprintf("Error occurs when getting pages, err = %s", err))
+	} else {
+		di := dm.getDataItem(page, offset)
+		if !di.IsValid() {
+			// LOG FIRST
+			oldRaw := di.GetRaw()
+			newRaw := make([]byte, len(oldRaw))
+			copy(newRaw, oldRaw)
+			SetRawValid(newRaw)
+			dm.redo.UpdateLog(uid, xid, oldRaw, newRaw)
+			di.SetValid()
+		}
+		di.Release()
+	}
 }
 
 func (dm *DmImpl) Close() {

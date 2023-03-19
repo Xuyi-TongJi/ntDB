@@ -34,8 +34,8 @@ type VmImpl struct {
 }
 
 const (
-	MetaDataTbUid     int64         = -1
-	SleepTimeUnLocked time.Duration = 20 * time.Millisecond
+	MetaDataTbUid     int64 = -1
+	SleepTimeUnLocked       = 20 * time.Millisecond
 )
 
 // Read
@@ -132,7 +132,7 @@ func (v *VmImpl) CreateReadView(xid int64) *ReadView {
 	v.lock.RLock()
 	defer v.lock.RUnlock()
 	var active []int64
-	for xid, _ := range v.activeTrans {
+	for xid := range v.activeTrans {
 		active = append(active, xid)
 	}
 	return &ReadView{
@@ -167,31 +167,49 @@ func (v *VmImpl) Commit(xid int64) {
 	defer v.lock.Unlock()
 	v.lt.RemoveLock(xid)
 	delete(v.activeTrans, xid)
-	if xid == v.minActiveXid {
-		nextXid := xid + 1
-		for true {
-			if _, ext := v.activeTrans[nextXid]; !ext {
-				nextXid += 1
-			} else {
-				v.minActiveXid = nextXid
-				break
-			}
-		}
-	}
+	v.changeMinXid(xid)
 	// tm
 	v.tm.Commit(xid)
 }
 
 // Abort
 // 回滚事物
+// 回滚时，因为该事物做出过写操作，因此一定持有相应的表锁，可以直接进行写操作
 // 释放该事物持有的所有锁
 // 更新vm状态
 func (v *VmImpl) Abort(xid int64) {
-	_ = v.getTransaction(xid) // check Valid
+	tran := v.getTransaction(xid)
 	v.lock.Lock()
 	defer v.lock.Unlock()
-	// TODO implement me
-
+	n := len(tran.action)
+	for i := n - 1; i >= 0; i-- {
+		switch tran.action[i].aType {
+		case UPDATE:
+			{
+				if tran.action[i].newUid == tran.action[i].oldUid {
+					// newUid == oldUid 原地修改
+					_ = v.dm.Update(xid, tran.action[i].oldUid, tran.action[i].oldRaw)
+				} else {
+					// newUid != oldUid 让新的失效，旧的重新valid
+					v.dm.Delete(xid, tran.action[i].newUid)
+					v.dm.Recover(xid, tran.action[i].oldUid)
+				}
+			}
+		case DELETE:
+			{
+				v.dm.Recover(xid, tran.action[i].oldUid)
+			}
+		case INSERT:
+			{
+				v.dm.Delete(xid, tran.action[i].newUid)
+			}
+		default:
+			panic("Error occurs when roll back, invalid action type")
+		}
+	}
+	v.lt.RemoveLock(xid)
+	delete(v.activeTrans, xid)
+	v.changeMinXid(xid)
 	// tm
 	v.tm.Abort(xid)
 }
@@ -254,6 +272,20 @@ func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
 		time.Sleep(SleepTimeUnLocked)
 	}
 	return nil
+}
+
+func (v *VmImpl) changeMinXid(xid int64) {
+	if xid == v.minActiveXid {
+		nextXid := xid + 1
+		for true {
+			if _, ext := v.activeTrans[nextXid]; !ext {
+				nextXid += 1
+			} else {
+				v.minActiveXid = nextXid
+				break
+			}
+		}
+	}
 }
 
 func NewVersionManager(path string, memory int64, lock *sync.RWMutex) VersionManager {

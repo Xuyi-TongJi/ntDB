@@ -83,7 +83,7 @@ func wrapUndoLog(data []byte) []byte {
 }
 
 func createUndoLog(path string, lock *sync.Mutex) Log {
-	f, err := os.Create(path)
+	f, err := os.Create(path + UndoSuffix)
 	if err != nil {
 		panic(fmt.Sprintf("Error occurs when creating undo log, err = %s", err))
 	}
