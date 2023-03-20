@@ -14,7 +14,7 @@ import (
 type DataItem interface {
 	GetData() []byte
 	GetDataLength() int64
-	GetRaw() []byte
+	GetRaw() []byte // 深拷贝，确保上层模块不会直接修改dataItem中的数据
 
 	IsValid() bool
 	SetInvalid()
@@ -23,20 +23,6 @@ type DataItem interface {
 	GetUid() int64
 	Release()
 	Update(newRaw []byte)
-
-	// Deprecated
-	// lock
-
-	//Lock()
-	//UnLock()
-	//RLock()
-	//RUnLock()
-	//GetOldRaw() []byte
-
-	// update
-	//BeforeUpdate(xid int64)
-	//UndoUpdate(xid int64)
-	//AfterUpdate(xid int64)
 }
 
 // DataItemImpl
@@ -131,39 +117,6 @@ func (di *DataItemImpl) SetValid() {
 func (di *DataItemImpl) GetPage() Page {
 	return di.page
 }
-
-//func (di *DataItemImpl) Lock() {
-//	di.lock.Lock()
-//}
-//
-//func (di *DataItemImpl) UnLock() {
-//	di.lock.Unlock()
-//}
-//
-//func (di *DataItemImpl) RLock() {
-//	di.lock.RLock()
-//}
-//
-//func (di *DataItemImpl) RUnLock() {
-//	di.lock.RUnlock()
-//}
-
-//// BeforeUpdate
-//// 事物xid在update dataItem前的操作
-//// 记录log
-//func (di *DataItemImpl) BeforeUpdate(xid int64, OType OperationType) {
-//	// TODO
-//}
-//
-//func (di *DataItemImpl) UndoUpdate(xid int64) {
-//	// TODO implement me
-//	panic("implement me")
-//}
-//
-//func (di *DataItemImpl) AfterUpdate(xid int64) {
-//	//TODO implement me
-//	panic("implement me")
-//}
 
 // Update 更新DataItem中的数据
 // newRaw的长度禁止长于oldRaw, 否则会覆盖Page后续的数据

@@ -50,7 +50,7 @@ type Field interface {
 }
 
 // FieldImpl
-// [FieldName][TypeName]8[IndexUid]8
+// [FieldMask]4[FieldName][TypeName]8[IndexUid]8
 // [FieldName] -> [StringLength]8[StringData]...
 // IndexUid 索引根结点
 // 如果这个字段没有建立索引，则indexUid = 0
@@ -58,10 +58,11 @@ type Field interface {
 type FieldType int64
 
 const (
-	INVALID FieldType = 0
-	INT32   FieldType = 1 // [4 Bytes]
-	INT64   FieldType = 2 // [8 Bytes]
-	STRING  FieldType = 3 // [StringLength]8[StringData]
+	FieldMask int32     = 0xf3f3f3
+	INVALID   FieldType = 0
+	INT32     FieldType = 1 // [4 Bytes]
+	INT64     FieldType = 2 // [8 Bytes]
+	STRING    FieldType = 3 // [StringLength]8[StringData]
 )
 
 type FieldImpl struct {
@@ -105,7 +106,14 @@ type FieldImplFactory struct {
 	compareFunctionMap map[FieldType]func(any, any) int
 }
 
+// NewField
+// 工厂方法
+// 当Field不是一个有效的Field字段时，panic
 func (f *FieldImplFactory) NewField(tb Table, uid int64, raw []byte, im indexManager.IndexManager) Field {
+	mask := int32(binary.BigEndian.Uint32(raw[:SzMask]))
+	if mask != FieldMask {
+		panic("Error occurs when creating a field struct, it is not a valid field raw")
+	}
 	// [FieldName(string_format)][TypeName]8[IndexUid]8
 	fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzStringLength]))
 	fieldName := string(raw[SzStringLength : SzStringLength+fieldNameLength])

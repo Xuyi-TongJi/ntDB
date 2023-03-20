@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// VersionManager
+// 控制事物的并发执行，快照读为无锁实现
+
+// V1.0 超级事物只会进行快照读 -> 在启动时读取表的元数据
+// 启动时不可能有活跃事物(Crash Recovery)，不需要进行init
+
 type VersionManager interface {
 	Read(xid, uid int64) Record
 	ReadForUpdate(xid, uid, tbUid int64) (Record, error)         // ReadForUpdate 当前读
@@ -40,6 +46,7 @@ const (
 
 // Read
 // 快照读 MVCC
+// 超级事物只会进行快照读
 // 没有写权限
 // 可能返回nil
 func (v *VmImpl) Read(xid, uid int64) Record {
@@ -52,8 +59,8 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 		return nil
 	}
 	record := DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, false)
-	// 超级事物创建的
-	if record.GetXid() == transactions.SuperXID {
+	// 超级事物读取的
+	if xid == transactions.SuperXID {
 		return record
 	}
 	for record != nil && !v.checkMvccValid(record, xid) {
