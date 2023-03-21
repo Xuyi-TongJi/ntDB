@@ -6,7 +6,6 @@ import (
 	"myDB/dataManager"
 	"myDB/transactions"
 	"sync"
-	"time"
 )
 
 // VersionManager
@@ -23,7 +22,7 @@ type VersionManager interface {
 	Delete(xid, uid, tbUid int64) error
 	CreateReadView(xid int64) *ReadView // 创建读视图
 
-	Begin(level IsolationLevel, autoCommitted bool) int64
+	Begin(level IsolationLevel) int64
 	Commit(xid int64)
 	Abort(xid int64)
 }
@@ -40,17 +39,19 @@ type VmImpl struct {
 }
 
 const (
-	MetaDataTbUid     int64 = -1
-	SleepTimeUnLocked       = 20 * time.Millisecond
+	MetaDataTbUid   int64 = -1
+	MaxTryLockCount int   = 5
 )
 
 // Read
 // 快照读 MVCC
 // 超级事物只会进行快照读
-// 没有写权限
 // 可能返回nil
 func (v *VmImpl) Read(xid, uid int64) Record {
 	transaction := v.getTransaction(xid)
+	if transaction == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	if transaction.level == ReadCommitted {
 		transaction.rv = v.CreateReadView(xid)
 	}
@@ -60,21 +61,22 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 	}
 	record := DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, false)
 	// 超级事物读取的
-	if xid == transactions.SuperXID {
+	if xid == transactions.SuperXID || v.checkMvccValid(record, xid) {
 		return record
 	}
-	for record != nil && !v.checkMvccValid(record, xid) {
-		record = DefaultRecordFactory.NewSnapShot(record.GetData(), v.undo)
+	for record != nil {
+		record = record.GetPrevious()
 	}
 	return record
 }
 
 // ReadForUpdate
 // 当前读
-// 具有写权限
-// 真正执行更新操作的是TBM(表和字段管理)
 func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
-	_ = v.getTransaction(xid) // check valid
+	transaction := v.getTransaction(xid) // check valid
+	if transaction == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return nil, err
 	}
@@ -87,6 +89,9 @@ func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 
 func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 	tran := v.getTransaction(xid) // check valid
+	if tran == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	// readForUpdate 获取表锁
 	if record, err := v.ReadForUpdate(xid, uid, tbUid); err != nil {
 		return -1, err
@@ -107,21 +112,31 @@ func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 // 返回DataItem的uid
 func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	tran := v.getTransaction(xid) // check valid
-	// metaData, 不需要获得锁，直接插入
+	if tran == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
+	// metaData, 不需要获得锁，直接插入, 但是在插入结束后，xid会直接获得这个uid的锁
 	if tbUid == MetaDataTbUid {
 		return v.dm.Insert(xid, data), nil
 	}
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return -1, err
 	}
-	// xid已经取得表锁，不需要继续加v锁
+	// xid已经取得表锁，不需要继续加vm锁
 	uid := v.dm.Insert(xid, data)
 	tran.AddInsert(uid)
+	// 插入的是表元数据，xid获得uid的锁, must success
+	if tbUid == MetaDataTbUid {
+		_ = v.tryToLockTable(xid, uid)
+	}
 	return uid, nil
 }
 
 func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
 	tran := v.getTransaction(xid) // check valid
+	if tran == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	// metaData, 不需要获得锁，直接删除
 	if tbUid == MetaDataTbUid {
 		v.dm.Delete(xid, uid)
@@ -152,11 +167,11 @@ func (v *VmImpl) CreateReadView(xid int64) *ReadView {
 
 // Begin
 // 开启一个新的事物
-func (v *VmImpl) Begin(level IsolationLevel, autoCommitted bool) int64 {
+func (v *VmImpl) Begin(level IsolationLevel) int64 {
 	v.lock.Lock()
 	defer v.lock.Unlock()
 	xid := v.tm.Begin()
-	trans := NewTransaction(xid, level, autoCommitted, v)
+	trans := NewTransaction(xid, level, v)
 	if xid+1 > v.nextXid {
 		v.nextXid = xid + 1
 	}
@@ -169,12 +184,13 @@ func (v *VmImpl) Begin(level IsolationLevel, autoCommitted bool) int64 {
 // 释放该事物持有的所有锁
 // 更新vm状态
 func (v *VmImpl) Commit(xid int64) {
-	v.checkXidActive(xid) // check Valid
+	tran := v.getTransaction(xid)
+	if tran == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	v.lock.Lock()
 	defer v.lock.Unlock()
-	v.lt.RemoveLock(xid)
-	delete(v.activeTrans, xid)
-	v.changeMinXid(xid)
+	v.endTransaction(xid, tran)
 	// tm
 	v.tm.Commit(xid)
 }
@@ -186,6 +202,9 @@ func (v *VmImpl) Commit(xid int64) {
 // 更新vm状态
 func (v *VmImpl) Abort(xid int64) {
 	tran := v.getTransaction(xid)
+	if tran == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	v.lock.Lock()
 	defer v.lock.Unlock()
 	n := len(tran.action)
@@ -214,9 +233,7 @@ func (v *VmImpl) Abort(xid int64) {
 			panic("Error occurs when roll back, invalid action type")
 		}
 	}
-	v.lt.RemoveLock(xid)
-	delete(v.activeTrans, xid)
-	v.changeMinXid(xid)
+	v.endTransaction(xid, tran)
 	// tm
 	v.tm.Abort(xid)
 }
@@ -225,24 +242,23 @@ func (v *VmImpl) getTransaction(xid int64) *Transaction {
 	v.lock.RLock()
 	defer v.lock.RUnlock()
 	if ret, ext := v.activeTrans[xid]; !ext {
-		panic("Error occurs when getting transaction, this is an inactive transaction")
+		return nil
 	} else {
 		return ret
 	}
 }
 
-// checkXidActive
-// 检测
-func (v *VmImpl) checkXidActive(xid int64) {
-	if _, ext := v.activeTrans[xid]; !ext {
-		panic("Error occurs when getting transaction, this is an inactive transaction")
-	}
-}
-
 func (v *VmImpl) checkMvccValid(record Record, xid int64) bool {
 	transaction := v.getTransaction(xid)
+	if transaction == nil {
+		panic("Error occurs when getting transaction struct, it is not an active transaction")
+	}
 	readView := transaction.rv
 	recordXid := record.GetXid()
+	// 自己创建的
+	if recordXid == xid {
+		return true
+	}
 	if recordXid < readView.minXid {
 		return true
 	}
@@ -257,7 +273,11 @@ func (v *VmImpl) checkMvccValid(record Record, xid int64) bool {
 	return true
 }
 
+// tryToLockTable
+// 尝试获取tbUid锁
+// 加锁策略，先自旋获取MaxTryLockCount次锁，如果依旧失败，在tbUid的owner事物的channel上阻塞
 func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
+	tryTime := 0 // 尝试获取锁的次数
 	var lastOwner int64 = -1
 	for true {
 		// 成功获取表锁
@@ -276,9 +296,36 @@ func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
 			break
 		}
 		lastOwner = last
-		time.Sleep(SleepTimeUnLocked)
+		tryTime += 1
+		if tryTime == MaxTryLockCount {
+			v.parkOnChannel(lastOwner)
+		}
 	}
 	return nil
+}
+
+// parkOnChannel
+// 在transaction上的channel阻塞
+func (v *VmImpl) parkOnChannel(wait int64) {
+	if tran := v.getTransaction(wait); tran != nil {
+		// wait依旧活跃
+		select {
+		case <-tran.waiting:
+			{
+			}
+		}
+	}
+}
+
+// endTransaction
+// 结束事物
+// 必须获取v的锁
+func (v *VmImpl) endTransaction(xid int64, tran *Transaction) {
+	v.lt.RemoveLock(xid)
+	delete(v.activeTrans, xid)
+	v.changeMinXid(xid)
+	// wake up
+	close(tran.waiting)
 }
 
 func (v *VmImpl) changeMinXid(xid int64) {

@@ -9,21 +9,21 @@ const (
 
 // Transaction 描述事物的抽象
 type Transaction struct {
-	xid           int64
-	level         IsolationLevel
-	rv            *ReadView // 读视图
-	autoCommitted bool
-	vm            VersionManager
-	locks         []int64   // 持有的表锁
-	action        []*Action // 执行的操作, 用于回滚
+	xid     int64
+	level   IsolationLevel
+	rv      *ReadView // 读视图
+	vm      VersionManager
+	action  []*Action // 执行的操作, 用于回滚
+	waiting chan struct{}
 }
 
-func NewTransaction(xid int64, level IsolationLevel, autoCommitted bool, vm VersionManager) *Transaction {
+func NewTransaction(xid int64, level IsolationLevel, vm VersionManager) *Transaction {
 	tx := &Transaction{
-		xid:           xid,
-		level:         level,
-		autoCommitted: autoCommitted,
-		vm:            vm,
+		xid:     xid,
+		level:   level,
+		vm:      vm,
+		action:  make([]*Action, 0),
+		waiting: make(chan struct{}),
 	}
 	if level == ReadRepeatable {
 		// 生成ReadView

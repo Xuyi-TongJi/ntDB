@@ -14,8 +14,9 @@ func init() {
 type Table interface {
 	GetName() string
 	GetNextUid() int64
-	GetUid() int64               // 表的uid(存储位置)
-	SearchAll() ([]int64, error) // 全表扫描
+	GetUid() int64 // 表的uid(存储位置)
+	GetFields() []Field
+	GetFirstRecordUid() int64
 }
 
 // DB中的所有表组织成链表的形式
@@ -55,9 +56,12 @@ func (tb *TableImpl) GetNextUid() int64 {
 	return tb.nextUid
 }
 
-func (tb *TableImpl) SearchAll() ([]int64, error) {
-	// TODO
-	return nil, nil
+func (tb *TableImpl) GetFields() []Field {
+	return tb.fields
+}
+
+func (tb *TableImpl) GetFirstRecordUid() int64 {
+	return tb.firstRecordUid
 }
 
 type TableStatus byte
@@ -69,7 +73,7 @@ const (
 
 // WrapTableRaw
 // 包装一个空表的Raw
-func WrapTableRaw(tableName string, nextUid int64, fields []Field) []byte {
+func WrapTableRaw(tableName string, nextUid int64, fields []Field, firstRecordUid int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
 	stringLength := int64(len(tableName))
 	_ = binary.Write(buffer, binary.BigEndian, stringLength)
@@ -81,7 +85,7 @@ func WrapTableRaw(tableName string, nextUid int64, fields []Field) []byte {
 		uid := fields[i].GetUid()
 		_ = binary.Write(buffer, binary.BigEndian, uid)
 	}
-	_ = binary.Write(buffer, binary.BigEndian, int64(0))
+	_ = binary.Write(buffer, binary.BigEndian, firstRecordUid)
 	return buffer.Bytes()
 }
 
@@ -100,12 +104,12 @@ func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Tabl
 		panic("Error occurs when creating a table struct, it is not a valid table raw")
 	}
 	raw = append(raw[SzMask:])
-	tableNameLength := int64(binary.BigEndian.Uint64(raw[:SzStringLength]))
-	tableName := string(raw[SzStringLength : SzStringLength+tableNameLength])
+	tableNameLength := int64(binary.BigEndian.Uint64(raw[:SzVariableLength]))
+	tableName := string(raw[SzVariableLength : SzVariableLength+tableNameLength])
 	nextUid := int64(binary.BigEndian.Uint64(
-		raw[SzStringLength+tableNameLength : SzStringLength+tableNameLength+SzTableUid]))
+		raw[SzVariableLength+tableNameLength : SzVariableLength+tableNameLength+SzTableUid]))
 	tableFieldNumber := int32(binary.BigEndian.Uint32(
-		raw[SzStringLength+tableNameLength+SzTableUid : SzStringLength+tableNameLength+SzTableUid+SzTableFieldNumber]))
+		raw[SzVariableLength+tableNameLength+SzTableUid : SzVariableLength+tableNameLength+SzTableUid+SzTableFieldNumber]))
 	fields := make([]Field, tableFieldNumber)
 	table := &TableImpl{
 		tm:             tm,
@@ -116,7 +120,7 @@ func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Tabl
 		fields:         fields,
 		firstRecordUid: 0,
 	}
-	pointer := SzStringLength + tableNameLength + SzTableUid + SzTableFieldNumber
+	pointer := SzVariableLength + tableNameLength + SzTableUid + SzTableFieldNumber
 	for i := int32(0); i < tableFieldNumber; i++ {
 		fUid := int64(binary.BigEndian.Uint64(raw[pointer : pointer+SzFieldUid]))
 		pointer += SzFieldUid

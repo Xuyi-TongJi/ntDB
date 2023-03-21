@@ -41,23 +41,34 @@ func init() {
 	DefaultFieldFactory = &FieldImplFactory{
 		compareFunctionMap: m,
 	}
+	FTypeLength = map[FieldType]int64{}
+	FTypeLength[INT32] = 4
+	FTypeLength[INT64] = 8
+	FTypeLength[STRING] = VARIABLE // 变长字段
 }
 
 type Field interface {
 	GetUid() int64
+	GetFType() FieldType
+	GetName() string
+	SetTable(tb Table)
 	IsIndexed() bool
-	Range(left any, right any) ([]int64, error)
 }
 
 // FieldImpl
 // [FieldMask]4[FieldName][TypeName]8[IndexUid]8
 // [FieldName] -> [StringLength]8[StringData]...
 // IndexUid 索引根结点
+// Field的raw和table信息无关
 // 如果这个字段没有建立索引，则indexUid = 0
 
 type FieldType int64
 
+// FTypeLength 字段对应的字段长度, 如果是变长字段，则对应的存储结构为[length]8[data], 该值为-1
+var FTypeLength map[FieldType]int64
+
 const (
+	VARIABLE  int64     = -1
 	FieldMask int32     = 0xf3f3f3
 	INVALID   FieldType = 0
 	INT32     FieldType = 1 // [4 Bytes]
@@ -78,23 +89,26 @@ func (f *FieldImpl) GetUid() int64 {
 	return f.uid
 }
 
+func (f *FieldImpl) GetName() string {
+	return f.fieldName
+}
+
+func (f *FieldImpl) GetFType() FieldType {
+	return f.fieldType
+}
+
+func (f *FieldImpl) SetTable(tb Table) {
+	f.tb = tb
+}
+
 func (f *FieldImpl) IsIndexed() bool {
 	return f.indexUid != 0
 }
 
-func (f *FieldImpl) Range(left any, right any) ([]int64, error) {
-	if f.IsIndexed() {
-		return f.index.SearchRange(left, right)
-	} else {
-		// 全表扫描
-		return f.tb.SearchAll()
-	}
-}
-
 const (
-	SzFieldType    int64 = 8
-	SzStringLength int64 = 8
-	SzIndexUid     int64 = 8
+	SzFieldType      int64 = 8
+	SzVariableLength int64 = 8
+	SzIndexUid       int64 = 8
 )
 
 type FieldFactory interface {
@@ -115,11 +129,11 @@ func (f *FieldImplFactory) NewField(tb Table, uid int64, raw []byte, im indexMan
 		panic("Error occurs when creating a field struct, it is not a valid field raw")
 	}
 	// [FieldName(string_format)][TypeName]8[IndexUid]8
-	fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzStringLength]))
-	fieldName := string(raw[SzStringLength : SzStringLength+fieldNameLength])
+	fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzVariableLength]))
+	fieldName := string(raw[SzVariableLength : SzVariableLength+fieldNameLength])
 	fieldType := FieldType(binary.BigEndian.
-		Uint64(raw[SzStringLength+fieldNameLength : SzStringLength+fieldNameLength+SzFieldType]))
-	indexUid := int64(binary.BigEndian.Uint64(raw[SzStringLength+fieldNameLength+SzFieldType:]))
+		Uint64(raw[SzVariableLength+fieldNameLength : SzVariableLength+fieldNameLength+SzFieldType]))
+	indexUid := int64(binary.BigEndian.Uint64(raw[SzVariableLength+fieldNameLength+SzFieldType:]))
 	var index indexManager.Index
 	if indexUid != 0 {
 		index = im.LoadIndex(indexUid)
@@ -168,4 +182,91 @@ func TransToFieldType(typeStr string) (FieldType, error) {
 	default:
 		return INVALID, &ErrorInvalidFType{}
 	}
+}
+
+type ErrorFTypeInvalid struct{}
+
+func (err *ErrorFTypeInvalid) Error() string {
+	return "The type value bytes can not be traversed to the target field type"
+}
+
+func getFTypeValue(fType FieldType, raw []byte) (any, error) {
+	switch fType {
+	case INT32:
+		{
+			return int32(binary.BigEndian.Uint32(raw)), nil
+		}
+	case INT64:
+		{
+			return int64(binary.BigEndian.Uint64(raw)), nil
+		}
+	case STRING:
+		{
+			return string(raw), nil
+		}
+	default:
+		return nil, &ErrorFTypeInvalid{}
+	}
+}
+
+type ErrorValueNotMatch struct{}
+
+func (err *ErrorValueNotMatch) Error() string {
+	return "Field Value doesn't match with the field type"
+}
+
+func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
+	buffer := bytes.NewBuffer([]byte{})
+	switch fType {
+	case INT32:
+		{
+			if v, available := value.(int32); !available {
+				return nil, &ErrorValueNotMatch{}
+			} else {
+				_ = binary.Write(buffer, binary.BigEndian, v)
+			}
+		}
+	case INT64:
+		{
+			if v, available := value.(int64); !available {
+				return nil, &ErrorValueNotMatch{}
+			} else {
+				_ = binary.Write(buffer, binary.BigEndian, v)
+			}
+		}
+	case STRING:
+		{
+			if s, available := value.(string); !available {
+				return nil, &ErrorValueNotMatch{}
+			} else {
+				_ = binary.Write(buffer, binary.BigEndian, int64(len(s)))
+				_ = binary.Write(buffer, binary.BigEndian, []byte(s))
+			}
+		}
+	}
+	return buffer.Bytes(), nil
+}
+
+func checkValueMatch(fType FieldType, value any) error {
+	switch fType {
+	case INT32:
+		{
+			if _, available := value.(int32); !available {
+				return &ErrorValueNotMatch{}
+			}
+		}
+	case INT64:
+		{
+			if _, available := value.(int64); !available {
+				return &ErrorValueNotMatch{}
+			}
+		}
+	case STRING:
+		{
+			if _, available := value.(string); !available {
+				return &ErrorValueNotMatch{}
+			}
+		}
+	}
+	return nil
 }
