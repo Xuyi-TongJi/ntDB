@@ -11,7 +11,8 @@ import (
 	"sync"
 )
 
-// 日志系统实现
+// redo log实现
+// 功能：Crash Recovery
 // 迭代器模式
 // 所有操作必须先记录日志（保证刷入磁盘后），再执行数据操作
 // Any error will panic

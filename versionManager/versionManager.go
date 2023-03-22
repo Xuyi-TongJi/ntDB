@@ -186,7 +186,7 @@ func (v *VmImpl) Begin(level IsolationLevel) int64 {
 func (v *VmImpl) Commit(xid int64) {
 	tran := v.getTransaction(xid)
 	if tran == nil {
-		panic("Error occurs when getting transaction struct, it is not an active transaction")
+		return
 	}
 	v.lock.Lock()
 	defer v.lock.Unlock()
@@ -203,7 +203,7 @@ func (v *VmImpl) Commit(xid int64) {
 func (v *VmImpl) Abort(xid int64) {
 	tran := v.getTransaction(xid)
 	if tran == nil {
-		panic("Error occurs when getting transaction struct, it is not an active transaction")
+		return
 	}
 	v.lock.Lock()
 	defer v.lock.Unlock()

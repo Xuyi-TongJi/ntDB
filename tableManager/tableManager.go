@@ -19,16 +19,16 @@ import (
 
 type TableManager interface {
 	Begin() int64 // 开启一个事物，返回xid
-	Commit(xid int64) error
-	Abort(xid int64) error
+	Commit(xid int64)
+	Abort(xid int64)
 
 	Show(xid int64) ([]*ResponseObject, error) // 展示DB中的所有表
-	Create(xid int64, create Create) error     // create table
+	Create(xid int64, create *Create) error    // create table
 
-	Insert(xid int64, insert Insert) error
-	Read(xid int64, sel Select) ([]*ResponseObject, error)      // select
-	Update(xid int64, update Update) ([]*ResponseObject, error) // update fields
-	Delete(xid int64, delete Delete) ([]*ResponseObject, error)
+	Insert(xid int64, insert *Insert) error                 // insert
+	Read(xid int64, sel *Select) ([]*ResponseObject, error) // select
+	Update(xid int64, update *Update) error                 // update fields
+	Delete(xid int64, delete *Delete) error                 // delete
 
 	LoadField(tb Table, uid int64) Field
 	CreateField(xid int64, fieldName string, fieldType FieldType, indexed bool) (Field, error)
@@ -47,7 +47,7 @@ type TMImpl struct {
 	vm          versionManager.VersionManager
 	im          indexManager.IndexManager // 保留字段, 实现索引后使用
 	tables      map[string]int64          // name -> uid
-	tableUid    map[int64]string          // uid -> name
+	tableUid    map[int64]string          // ****uid -> name, 因为表的recordRaw不会增加，因此表的uid永远不会更新
 	bootFile    *os.File                  // bootFile里保存一个八字节长度tbUid, 为tb链表的头部，在每次数据库启动时，通过这个文件初始化tableUid
 	topTableUid int64
 	path        string
@@ -59,6 +59,7 @@ type TMImpl struct {
 type ErrorTableNotExist struct{}
 type ErrorInvalidFieldCount struct{}
 type ErrorInvalidFieldName struct{}
+type ErrorUnsupportedOperationType struct{}
 
 func (err *ErrorTableNotExist) Error() string {
 	return "Table doesn't exist"
@@ -72,18 +73,20 @@ func (err *ErrorInvalidFieldName) Error() string {
 	return "The field doesn't exist in this table"
 }
 
+func (err *ErrorUnsupportedOperationType) Error() string {
+	return "The operation type is not supported"
+}
+
 func (tm *TMImpl) Begin() int64 {
 	return tm.vm.Begin(config.IsolationLevel)
 }
 
-func (tm *TMImpl) Commit(xid int64) error {
+func (tm *TMImpl) Commit(xid int64) {
 	tm.vm.Commit(xid)
-	return nil
 }
 
-func (tm *TMImpl) Abort(xid int64) error {
+func (tm *TMImpl) Abort(xid int64) {
 	tm.vm.Abort(xid)
-	return nil
 }
 
 // Show
@@ -106,12 +109,12 @@ func (tm *TMImpl) Show(xid int64) ([]*ResponseObject, error) {
 	return res, nil
 }
 
-func (tm *TMImpl) Create(xid int64, create Create) error {
+func (tm *TMImpl) Create(xid int64, create *Create) error {
 	_, err := tm.CreateTable(xid, create.tbName, create.fields)
 	return err
 }
 
-func (tm *TMImpl) Insert(xid int64, insert Insert) error {
+func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 	// check valid
 	if uid, err := tm.getTbUid(insert.tbName); err != nil {
 		return err
@@ -128,7 +131,7 @@ func (tm *TMImpl) Insert(xid int64, insert Insert) error {
 			return &ErrorInvalidFieldCount{}
 		}
 		// TODO INDEX
-		if raw, err := WrapRowRaw(tb, RECORD, tb.GetFirstRecordUid(), insert.values); err != nil {
+		if raw, err := WrapRowRaw(tb, RECORD, int64(0), tb.GetFirstRecordUid(), insert.values); err != nil {
 			return err
 		} else {
 			uid, err := tm.vm.Insert(xid, raw, tb.GetUid())
@@ -136,6 +139,7 @@ func (tm *TMImpl) Insert(xid int64, insert Insert) error {
 				return err
 			}
 			newTableRaw := WrapTableRaw(insert.tbName, tb.GetNextUid(), tb.GetFields(), uid)
+			// 当前事物一定已经获取表锁, 这个Update和上面的Insert一定是原子的
 			newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTableRaw)
 			// **** newUid must equal to the current one
 			// assert
@@ -152,7 +156,7 @@ func (tm *TMImpl) Insert(xid int64, insert Insert) error {
 
 // Read
 // Select请求读取数据
-func (tm *TMImpl) Read(xid int64, sel Select) ([]*ResponseObject, error) {
+func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 	uid, err := tm.getTbUid(sel.tbName)
 	if err != nil {
 		return nil, err
@@ -163,23 +167,20 @@ func (tm *TMImpl) Read(xid int64, sel Select) ([]*ResponseObject, error) {
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// check where condition valid
 		if sel.where != nil && sel.where.compare != nil {
-			fieldName := sel.where.compare.fieldName
-			find := false
-			for _, field := range tb.GetFields() {
-				if field.GetName() == fieldName {
-					find = true
-					if err := checkValueMatch(field.GetFType(), sel.where.compare.value); err != nil {
-						return nil, err
-					}
-					break
-				}
-			}
-			if !find {
-				return nil, &ErrorInvalidFieldName{}
+			if err := tm.checkWhereCondition(tb, sel); err != nil {
+				return nil, err
 			}
 		}
 		// read data
-		rows, err := tm.searchAll(xid, tb)
+		var (
+			rows []Row
+			err  error
+		)
+		if sel.readForUpdate {
+			rows, err = tm.searchAllForUpdate(xid, tb)
+		} else {
+			rows, err = tm.searchAll(xid, tb)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -216,14 +217,225 @@ func (tm *TMImpl) Read(xid int64, sel Select) ([]*ResponseObject, error) {
 	}
 }
 
-func (tm *TMImpl) Update(xid int64, update Update) ([]*ResponseObject, error) {
-	//TODO implement me
-	panic("implement me")
+// Update
+// 上层必须确保在遇到error时回滚
+func (tm *TMImpl) Update(xid int64, update *Update) error {
+	sel := update.sel
+	if !sel.readForUpdate {
+		return &ErrorUnsupportedOperationType{}
+	}
+	uid, err := tm.getTbUid(sel.tbName)
+	if err != nil {
+		return err
+	}
+	if record := tm.vm.Read(xid, uid); record == nil {
+		return &ErrorTableNotExist{}
+	} else {
+		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
+		// check update valid
+		var target = -1
+		for i, field := range tb.GetFields() {
+			if field.GetName() == update.fName {
+				target = i
+				break
+			}
+		}
+		if target == -1 {
+			return &ErrorInvalidFieldName{}
+		}
+		if err := checkValueMatch(tb.GetFields()[target].GetFType(), update.toUpdate); err != nil {
+			return err
+		}
+		// check where
+		if sel.where != nil && sel.where.compare != nil {
+			if err := tm.checkWhereCondition(tb, sel); err != nil {
+				return err
+			}
+		}
+		rUid := tb.GetFirstRecordUid()
+		for rUid != 0 {
+			record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
+			if err != nil {
+				tm.Abort(xid)
+				return err
+			}
+			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
+			if matchWhereCondition(row, tb, sel.where) {
+				// update value
+				updateValues := row.GetValues()
+				updateValues[target] = update.toUpdate
+				if raw, err := WrapRowRaw(tb, RECORD, row.GetNextUid(), row.GetNextUid(), updateValues); err != nil {
+					tm.Abort(xid)
+					return err
+				} else {
+					newUid, err := tm.vm.Update(xid, uid, tb.GetUid(), raw)
+					if err != nil {
+						tm.Abort(xid)
+						return err
+					}
+					// uid change
+					if newUid != row.GetUid() {
+						prevUid := row.GetPrevUid()
+						nextUid := row.GetNextUid()
+						// modify prev
+						if prevUid != 0 {
+							// rewrite the previous row
+							rec, err := tm.vm.ReadForUpdate(xid, prevUid, tb.GetUid())
+							if err != nil {
+								tm.Abort(xid)
+								return err
+							}
+							previousRowRaw := rec.GetData()
+							row := DefaultRowFactory.NewRow(prevUid, tb, previousRowRaw)
+							if raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), newUid, row.GetValues()); err != nil {
+								tm.Abort(xid)
+								return err
+							} else {
+								newPrevUid, err := tm.vm.Update(xid, prevUid, tb.GetUid(), raw)
+								if newPrevUid != prevUid {
+									panic("Fatal Error occurs when updating record raw")
+								}
+								if err != nil {
+									tm.Abort(xid)
+									return err
+								}
+							}
+						} else {
+							// rewrite the table
+							tableRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid)
+							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
+							if newTableUid != tb.GetUid() {
+								panic("Fatal Error occurs when updating table metadata raw")
+							}
+							if err != nil {
+								tm.Abort(xid)
+								return err
+							}
+						}
+						// modify next
+						if nextUid != 0 {
+							// rewrite the next row
+							rec, err := tm.vm.ReadForUpdate(xid, nextUid, tb.GetUid())
+							if err != nil {
+								tm.Abort(xid)
+								return err
+							}
+							nextRowRaw := rec.GetData()
+							row := DefaultRowFactory.NewRow(nextUid, tb, nextRowRaw)
+							if raw, err := WrapRowRaw(tb, RECORD, newUid, row.GetNextUid(), row.GetValues()); err != nil {
+								tm.Abort(xid)
+								return err
+							} else {
+								newNextUid, err := tm.vm.Update(xid, nextUid, tb.GetUid(), raw)
+								if newNextUid != nextUid {
+									panic("Fatal Error occurs when updating record raw")
+								}
+								if err != nil {
+									tm.Abort(xid)
+									return err
+								}
+							}
+						}
+					}
+				}
+			}
+			rUid = row.GetNextUid()
+		}
+	}
+	return nil
 }
 
-func (tm *TMImpl) Delete(xid int64, delete Delete) ([]*ResponseObject, error) {
-	//TODO implement me
-	panic("implement me")
+// Delete
+// 如果没有where子句，则代表删除全表所有的数据
+func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
+	sel := delete.sel
+	if !sel.readForUpdate {
+		return &ErrorUnsupportedOperationType{}
+	}
+	uid, err := tm.getTbUid(sel.tbName)
+	if err != nil {
+		return err
+	}
+	if record := tm.vm.Read(xid, uid); record == nil {
+		return &ErrorTableNotExist{}
+	} else {
+		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
+		// check where
+		if sel.where != nil && sel.where.compare != nil {
+			if err := tm.checkWhereCondition(tb, sel); err != nil {
+				return err
+			}
+		} else {
+			// delete all
+			if err := tm.deleteAll(xid, tb); err != nil {
+				tm.Abort(xid)
+				return err
+			}
+		}
+		rUid := tb.GetFirstRecordUid()
+		for rUid != 0 {
+			record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
+			if err != nil {
+				tm.Abort(xid)
+				return err
+			}
+			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
+			if matchWhereCondition(row, tb, sel.where) {
+				if err := tm.vm.Delete(xid, row.GetUid(), tb.GetUid()); err != nil {
+					tm.Abort(xid)
+					return err
+				}
+				if row.GetPrevUid() == 0 {
+					// update table
+					newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid())
+					if newTbUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
+						tm.Abort(xid)
+						return err
+					} else if newTbUid != tb.GetUid() {
+						panic("Fatal Error occurs when updating table metadata raw")
+					}
+				} else {
+					// update previous
+					prevRecord, err := tm.vm.ReadForUpdate(xid, row.GetPrevUid(), tb.GetUid())
+					if err != nil {
+						tm.Abort(xid)
+						return err
+					}
+					prevRaw := prevRecord.GetData()
+					prevRow := DefaultRowFactory.NewRow(row.GetPrevUid(), tb, prevRaw)
+					raw, err := WrapRowRaw(tb, RECORD, prevRow.GetPrevUid(), row.GetNextUid(), prevRow.GetValues())
+					if err != nil {
+						tm.Abort(xid)
+						return err
+					}
+					prevUid, err := tm.vm.Update(xid, prevRow.GetUid(), tb.GetUid(), raw)
+					if prevUid != row.GetPrevUid() {
+						panic("Fatal Error occurs when updating record raw")
+					}
+				}
+				if row.GetNextUid() != 0 {
+					nextRecord, err := tm.vm.ReadForUpdate(xid, row.GetNextUid(), tb.GetUid())
+					if err != nil {
+						tm.Abort(xid)
+						return err
+					}
+					nextRaw := nextRecord.GetData()
+					nextRow := DefaultRowFactory.NewRow(row.GetNextUid(), tb, nextRaw)
+					raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), nextRow.GetValues())
+					if err != nil {
+						tm.Abort(xid)
+						return err
+					}
+					nextUid, err := tm.vm.Update(xid, nextRow.GetUid(), tb.GetUid(), raw)
+					if nextUid != row.GetNextUid() {
+						panic("Fatal Error occurs when updating record raw")
+					}
+				}
+			}
+			rUid = row.GetNextUid()
+		}
+	}
+	return nil
 }
 
 func (tm *TMImpl) LoadField(tb Table, uid int64) Field {
@@ -347,10 +559,48 @@ func (tm *TMImpl) searchAll(xid int64, tb Table) ([]Row, error) {
 	var ret []Row
 	for uid != 0 {
 		record := tm.vm.Read(xid, uid)
-		row := DefaultRowFactory.NewRow(tb, record.GetData())
+		row := DefaultRowFactory.NewRow(uid, tb, record.GetData())
 		ret = append(ret, row)
+		uid = row.GetNextUid()
 	}
 	return ret, nil
+}
+
+func (tm *TMImpl) searchAllForUpdate(xid int64, tb Table) ([]Row, error) {
+	uid := tb.GetFirstRecordUid()
+	var ret []Row
+	for uid != 0 {
+		if record, err := tm.vm.ReadForUpdate(xid, uid, tb.GetUid()); err != nil {
+			return nil, err
+		} else {
+			row := DefaultRowFactory.NewRow(uid, tb, record.GetData())
+			ret = append(ret, row)
+			uid = row.GetNextUid()
+		}
+	}
+	return ret, nil
+}
+
+func (tm *TMImpl) deleteAll(xid int64, tb Table) error {
+	if rows, err := tm.searchAllForUpdate(xid, tb); err != nil {
+		return err
+	} else {
+		for _, row := range rows {
+			if err := tm.vm.Delete(xid, row.GetUid(), tb.GetUid()); err != nil {
+				return err
+			}
+		}
+		// update table
+		newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), int64(0))
+		if newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
+			return err
+		} else {
+			if newUid != tb.GetUid() {
+				panic("Fatal Error occurs when updating table metadata raw")
+			}
+		}
+		return nil
+	}
 }
 
 func (tm *TMImpl) getTbUid(tbName string) (int64, error) {
@@ -373,6 +623,28 @@ func (tm *TMImpl) getTbName(tbUid int64) (string, error) {
 	}
 }
 
+func (tm *TMImpl) checkWhereCondition(tb Table, sel *Select) error {
+	if sel == nil || sel.where == nil || sel.where.compare == nil {
+		return nil
+	}
+	fieldName := sel.where.compare.fieldName
+	find := false
+	for _, field := range tb.GetFields() {
+		if field.GetName() == fieldName {
+			find = true
+			if err := checkValueMatch(field.GetFType(), sel.where.compare.value); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	if !find {
+		return &ErrorInvalidFieldName{}
+	}
+	return nil
+}
+
+// used for select query
 func (tm *TMImpl) wrapTableResponseTitle(fName []string) []*ResponseObject {
 	rowCnt := 0
 	colCnt := 0
@@ -427,7 +699,6 @@ func matchWhereCondition(row Row, table Table, where *Where) bool {
 	default:
 		return false
 	}
-	return false
 }
 
 func NewTableManager(path string, memory int64, mutex *sync.RWMutex) TableManager {
