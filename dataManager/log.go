@@ -71,7 +71,7 @@ func (redo *RedoLog) log(data []byte) {
 	// finally update the checkSum
 	nextCheckSum := calcCheckSum(int(redo.checkSum), data)
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.BigEndian, nextCheckSum)
+	_ = binary.Write(buffer, binary.LittleEndian, nextCheckSum)
 	if _, err := redo.file.WriteAt(buffer.Bytes(), 0); err != nil {
 		panic(fmt.Sprintf("Error occurs when writing redo log, err = %s", err))
 	}
@@ -103,7 +103,7 @@ func (redo *RedoLog) ResetLog() {
 		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
 	}
 	buffer := bytes.NewBuffer(make([]byte, 0))
-	_ = binary.Write(buffer, binary.BigEndian, int32(0))
+	_ = binary.Write(buffer, binary.LittleEndian, int32(0))
 	// 4 bytes checkSum
 	if _, err := redo.file.Write(buffer.Bytes()); err != nil {
 		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
@@ -123,7 +123,7 @@ func (redo *RedoLog) init() {
 	if _, err := redo.file.ReadAt(buf, 0); err != nil {
 		panic(fmt.Sprintf("Error occuring when initializing redo log, %s\n", err))
 	}
-	redo.checkSum = int32(binary.BigEndian.Uint32(buf))
+	redo.checkSum = int32(binary.LittleEndian.Uint32(buf))
 	redo.removeTail() // set offset
 }
 
@@ -170,7 +170,7 @@ func (redo *RedoLog) nextUnlock() (data []byte) {
 	if _, err := redo.file.ReadAt(buffer, redo.offset); err != nil {
 		panic(err)
 	}
-	dataSize := int64(binary.BigEndian.Uint32(buffer))
+	dataSize := int64(binary.LittleEndian.Uint32(buffer))
 	if redo.offset+SzData+SzCheckSum+dataSize > totSize {
 		return nil
 	}
@@ -339,7 +339,7 @@ func CreateRedoLog(path string, lock *sync.Mutex) Log {
 		panic(err)
 	}
 	buffer := bytes.NewBuffer(make([]byte, 0))
-	_ = binary.Write(buffer, binary.BigEndian, int32(0))
+	_ = binary.Write(buffer, binary.LittleEndian, int32(0))
 	// 4 bytes checkSum
 	if _, err := file.Write(buffer.Bytes()); err != nil {
 		panic(err)
@@ -382,9 +382,9 @@ func wrapLog(data []byte) []byte {
 	checkSum := calcCheckSum(0, data)
 	size := len(data)
 	buffer1 := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer1, binary.BigEndian, int32(size))
+	_ = binary.Write(buffer1, binary.LittleEndian, int32(size))
 	buffer2 := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer2, binary.BigEndian, checkSum)
+	_ = binary.Write(buffer2, binary.LittleEndian, checkSum)
 	// [size][checkSum][data]
 	ret := make([]byte, SzCheckSum+SzData+int64(len(data)))
 	copy(ret[0:SzData], buffer1.Bytes())
@@ -396,55 +396,55 @@ func wrapLog(data []byte) []byte {
 // Operation Parser
 
 func getOperationType(data []byte) OperationType {
-	return OperationType(binary.BigEndian.Uint32(data[0:SzOpt]))
+	return OperationType(binary.LittleEndian.Uint32(data[0:SzOpt]))
 }
 
 func getXid(data []byte) int64 {
-	return int64(binary.BigEndian.Uint64(data[SzOpt : SzXid+SzOpt]))
+	return int64(binary.LittleEndian.Uint64(data[SzOpt : SzXid+SzOpt]))
 }
 
 func getPageId(data []byte) int64 {
-	return int64(binary.BigEndian.Uint64(data[SzOpt+SzXid : SzOpt+SzXid+SzPageId]))
+	return int64(binary.LittleEndian.Uint64(data[SzOpt+SzXid : SzOpt+SzXid+SzPageId]))
 }
 
 // Unnecessary
 //func wrapInsertLog(xid, pageId, offset int64, raw []byte) []byte {
 //	buffer := bytes.NewBuffer(make([]byte, 0))
-//	_ = binary.Write(buffer, binary.BigEndian, int32(INSERT))
-//	_ = binary.Write(buffer, binary.BigEndian, xid)
-//	_ = binary.Write(buffer, binary.BigEndian, pageId)
-//	_ = binary.Write(buffer, binary.BigEndian, offset)
-//	_ = binary.Write(buffer, binary.BigEndian, raw)
+//	_ = binary.Write(buffer, binary.LittleEndian, int32(INSERT))
+//	_ = binary.Write(buffer, binary.LittleEndian, xid)
+//	_ = binary.Write(buffer, binary.LittleEndian, pageId)
+//	_ = binary.Write(buffer, binary.LittleEndian, offset)
+//	_ = binary.Write(buffer, binary.LittleEndian, raw)
 //	return buffer.Bytes()
 //}
 
 //func parseInsertLog(data []byte) (xid, pageId, offset int64, raw []byte) {
 //	data = data[SzOpt:]
-//	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
-//	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
-//	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
+//	xid = int64(binary.LittleEndian.Uint64(data[0:SzXid]))
+//	pageId = int64(binary.LittleEndian.Uint64(data[SzXid : SzXid+SzPageId]))
+//	offset = int64(binary.LittleEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
 //	raw = data[SzXid+SzPageId+SzOffset:]
 //	return
 //}
 
 func wrapUpdateLog(xid, pageId, offset, oldRawLength int64, oldRaw, newRaw []byte) []byte {
 	buffer := bytes.NewBuffer(make([]byte, 0))
-	_ = binary.Write(buffer, binary.BigEndian, int32(UPDATE))
-	_ = binary.Write(buffer, binary.BigEndian, xid)
-	_ = binary.Write(buffer, binary.BigEndian, pageId)
-	_ = binary.Write(buffer, binary.BigEndian, offset)
-	_ = binary.Write(buffer, binary.BigEndian, oldRawLength)
-	_ = binary.Write(buffer, binary.BigEndian, oldRaw)
-	_ = binary.Write(buffer, binary.BigEndian, newRaw)
+	_ = binary.Write(buffer, binary.LittleEndian, int32(UPDATE))
+	_ = binary.Write(buffer, binary.LittleEndian, xid)
+	_ = binary.Write(buffer, binary.LittleEndian, pageId)
+	_ = binary.Write(buffer, binary.LittleEndian, offset)
+	_ = binary.Write(buffer, binary.LittleEndian, oldRawLength)
+	_ = binary.Write(buffer, binary.LittleEndian, oldRaw)
+	_ = binary.Write(buffer, binary.LittleEndian, newRaw)
 	return buffer.Bytes()
 }
 
 func parseUpdateLog(data []byte) (xid, pageId, offset, oldRawLength int64, oldRaw, newRaw []byte) {
 	data = data[SzOpt:]
-	xid = int64(binary.BigEndian.Uint64(data[0:SzXid]))
-	pageId = int64(binary.BigEndian.Uint64(data[SzXid : SzXid+SzPageId]))
-	offset = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
-	oldRawLength = int64(binary.BigEndian.Uint64(data[SzXid+SzPageId+SzOffset : SzXid+SzPageId+SzOffset+8]))
+	xid = int64(binary.LittleEndian.Uint64(data[0:SzXid]))
+	pageId = int64(binary.LittleEndian.Uint64(data[SzXid : SzXid+SzPageId]))
+	offset = int64(binary.LittleEndian.Uint64(data[SzXid+SzPageId : SzXid+SzPageId+SzOffset]))
+	oldRawLength = int64(binary.LittleEndian.Uint64(data[SzXid+SzPageId+SzOffset : SzXid+SzPageId+SzOffset+8]))
 	oldRaw = data[SzXid+SzPageId+SzOffset+8 : SzXid+SzPageId+SzOffset+8+int(oldRawLength)]
 	newRaw = data[SzXid+SzPageId+SzOffset+8+int(oldRawLength):]
 	return

@@ -1,7 +1,7 @@
-package parser
+package executor
 
 type Parser interface {
-	ParseRequest() Request
+	ParseRequest()
 }
 
 type StringParser struct {

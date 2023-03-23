@@ -503,7 +503,7 @@ func (tm *TMImpl) CreateTable(xid int64, tableName string, fields []*FieldCreate
 			panic("Error occurs when creating temporary boot file")
 		} else {
 			buffer := bytes.NewBuffer([]byte{})
-			_ = binary.Write(buffer, binary.BigEndian, uid)
+			_ = binary.Write(buffer, binary.LittleEndian, uid)
 			if _, err := newFile.Write(buffer.Bytes()); err != nil {
 				panic("Error occurs when writing temporary boot file")
 			} else {
@@ -539,7 +539,7 @@ func (tm *TMImpl) loadTables() {
 	if _, err := tm.bootFile.ReadAt(buf, 0); err != nil {
 		panic("Error occurs when ")
 	}
-	startUid := int64(binary.BigEndian.Uint64(buf))
+	startUid := int64(binary.LittleEndian.Uint64(buf))
 	tm.topTableUid = startUid
 	uid := startUid
 	for uid != 0 {

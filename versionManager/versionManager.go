@@ -40,7 +40,7 @@ type VmImpl struct {
 
 const (
 	MetaDataTbUid   int64 = -1
-	MaxTryLockCount int   = 5
+	MaxTryLockCount int   = 3
 )
 
 // Read
@@ -55,23 +55,27 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 	if transaction.level == ReadCommitted {
 		transaction.rv = v.CreateReadView(xid)
 	}
-	di := v.dm.Read(uid) // DataItem
+	di := v.dm.ReadSnapShot(uid) // DataItem
 	if di == nil {
 		return nil
 	}
-	record := DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, false)
+	snapShot := DefaultRecordFactory.NewSnapShot(di.GetData(), v.undo)
 	// 超级事物读取的
-	if xid == transactions.SuperXID || v.checkMvccValid(record, xid) {
-		return record
+	if xid == transactions.SuperXID {
+		return snapShot
 	}
-	for record != nil {
-		record = record.GetPrevious()
+	for snapShot != nil && !v.checkMvccValid(snapShot, xid) {
+		snapShot = snapShot.GetPrevious()
 	}
-	return record
+	if !snapShot.IsValid() {
+		return nil
+	}
+	return snapShot
 }
 
 // ReadForUpdate
-// 当前读
+// 当前读，读取最新的数据，如果在dataItem层面已经失效，那么返回nil
+// 可能返回nil
 func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 	transaction := v.getTransaction(xid) // check valid
 	if transaction == nil {
@@ -84,9 +88,12 @@ func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 	if di == nil {
 		return nil, nil
 	}
-	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo, true), nil
+	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo), nil
 }
 
+// Update
+// 当前读出uid中的数据，如果已经invalid，则panic
+// 返回这条record新的uid（见DM的Update方法执行逻辑）
 func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 	tran := v.getTransaction(xid) // check valid
 	if tran == nil {
@@ -96,9 +103,12 @@ func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 	if record, err := v.ReadForUpdate(xid, uid, tbUid); err != nil {
 		return -1, err
 	} else {
+		if record == nil {
+			panic("Error occurs when updating records, it is an invalid record")
+		}
 		// undoLog
 		rollback := v.undo.Log(record.GetRaw())
-		newRecordRaw := WrapRecordRaw(newData, xid, rollback)
+		newRecordRaw := WrapRecordRaw(true, newData, xid, rollback)
 		newUid := v.dm.Update(xid, uid, newRecordRaw)
 		tran.AddUpdate(uid, newUid, record.GetRaw(), newRecordRaw)
 		return newUid, err
@@ -122,7 +132,6 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return -1, err
 	}
-	// xid已经取得表锁，不需要继续加vm锁
 	uid := v.dm.Insert(xid, data)
 	tran.AddInsert(uid)
 	// 插入的是表元数据，xid获得uid的锁, must success
@@ -132,19 +141,27 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	return uid, nil
 }
 
+// Delete
+// 删除一条记录
+// 2步： step1 -> 当前读出record, 将record调用dm.update为invalid step2 -> 调用dm层的Delete方法将uid所在dataItem置为invalid
 func (v *VmImpl) Delete(xid, uid, tbUid int64) error {
 	tran := v.getTransaction(xid) // check valid
 	if tran == nil {
 		panic("Error occurs when getting transaction struct, it is not an active transaction")
 	}
-	// metaData, 不需要获得锁，直接删除
-	if tbUid == MetaDataTbUid {
-		v.dm.Delete(xid, uid)
-	}
-	if err := v.tryToLockTable(xid, tbUid); err != nil {
+	// add lock
+	record, err := v.ReadForUpdate(xid, uid, tbUid)
+	if err != nil {
 		return err
 	}
-	// xid已经取得表锁，不需要继续加v锁
+	// undoLog
+	rollback := v.undo.Log(record.GetRaw())
+	newRecordRaw := WrapRecordRaw(false, record.GetData(), xid, rollback)
+	newUid := v.dm.Update(xid, uid, newRecordRaw) // newUid == uid
+	if newUid != uid {
+		panic("Fatal error when updating records")
+	}
+	tran.AddUpdate(uid, newUid, record.GetRaw(), newRecordRaw)
 	v.dm.Delete(xid, uid)
 	tran.AddDelete(uid)
 	return nil
@@ -283,7 +300,7 @@ func (v *VmImpl) tryToLockTable(xid, tbUid int64) error {
 		// 成功获取表锁
 		locked, last, err := v.lt.AddLock(xid, tbUid, lastOwner)
 		if err != nil {
-			// 死锁， 回滚
+			// 死锁，回滚
 			if errors.Is(err, &DeadLockError{}) {
 				v.Abort(xid)
 				return err

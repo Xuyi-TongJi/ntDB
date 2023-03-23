@@ -76,7 +76,7 @@ func (t *TransactionManagerImpl) checkXidFile() (bool, int64) {
 	if err != nil {
 		return false, -1
 	}
-	xid := int64(binary.BigEndian.Uint64(buf))
+	xid := int64(binary.LittleEndian.Uint64(buf))
 	stat, err = t.file.Stat()
 	if err != nil {
 		return false, -1
@@ -139,7 +139,7 @@ func (t *TransactionManagerImpl) Close() {
 
 func (t *TransactionManagerImpl) initXidFile() {
 	bytesBuffer := bytes.NewBuffer(make([]byte, 0))
-	if err := binary.Write(bytesBuffer, binary.BigEndian, int64(0)); err != nil {
+	if err := binary.Write(bytesBuffer, binary.LittleEndian, int64(0)); err != nil {
 		panic(err)
 	}
 	if _, err := t.file.Write(bytesBuffer.Bytes()); err != nil {
@@ -166,7 +166,7 @@ func (t *TransactionManagerImpl) increaseXidCounter() {
 	t.xidCounter++
 	// update length header
 	bytesBuffer := bytes.NewBuffer(make([]byte, 0))
-	if err := binary.Write(bytesBuffer, binary.BigEndian, t.xidCounter); err != nil {
+	if err := binary.Write(bytesBuffer, binary.LittleEndian, t.xidCounter); err != nil {
 		panic(err)
 	}
 	if _, err := t.file.WriteAt(bytesBuffer.Bytes(), 0); err != nil {

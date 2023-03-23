@@ -14,11 +14,12 @@ const PageNumberDbMeta int64 = 1
 
 type DataManager interface {
 	Read(uid int64) DataItem
+	ReadSnapShot(uid int64) DataItem
 	Update(xid, uid int64, data []byte) int64
 	Insert(xid int64, data []byte) int64
 	Delete(xid, uid int64)
 	Recover(xid, uid int64) // 回复删除(set valid)
-	Release(di DataItem)
+	Release(id DataItem)
 	Close()
 }
 
@@ -30,22 +31,34 @@ type DmImpl struct {
 	metaPage           Page // 数据库元数据页(直到dataManager关闭不会被换出)
 }
 
+// ReadSnapShot
+// 根据uid读取DataItem, 不检验有效位, 直接返回
+// 一定不会返回nil
+// 应用场景：快照读
+func (dm *DmImpl) ReadSnapShot(uid int64) DataItem {
+	return dm.doRead(uid)
+}
+
 // Read
 // 根据uid从PC中读取DataItem并校验有效位
-// 可能返回nil
+// 当DataItem失效时，返回nil
+// 应用场景：当前读
 func (dm *DmImpl) Read(uid int64) DataItem {
+	di := dm.doRead(uid)
+	if !di.IsValid() {
+		return nil
+	}
+	return di
+}
+
+func (dm *DmImpl) doRead(uid int64) DataItem {
 	pageId, offset := uidTrans(uid)
 	if page, err := dm.pageCache.GetPage(pageId); err != nil {
 		panic(fmt.Sprintf("Error occurs when getting pages, err = %s", err))
 	} else {
 		item := dm.getDataItem(page, offset)
-		if item.IsValid() {
-			dm.Release(item)
-			return item
-		} else {
-			dm.Release(item)
-			return nil
-		}
+		dm.Release(item)
+		return item
 	}
 }
 
@@ -200,7 +213,7 @@ func (dm *DmImpl) getDataItem(page Page, offset int64) DataItem {
 	// start from the offset of data
 	data := page.GetData()
 	// RAW [valid]1[size]8[data]
-	dataSize := int64(binary.BigEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
+	dataSize := int64(binary.LittleEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
 	raw := data[offset : offset+SzDIValid+SzDIDataSize+dataSize]
 	oldRaw := make([]byte, len(raw))
 	uid := getUid(page.GetId(), offset)

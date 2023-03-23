@@ -79,18 +79,18 @@ func (r *RowImplFactory) NewRow(uid int64, tb Table, raw []byte) Row {
 	fields := tb.GetFields()
 	values := make([]any, len(fields))
 	offset := int64(0)
-	rType := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRowType]))
+	rType := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRowType]))
 	offset += SzRowType
-	prevUid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRowUid]))
+	prevUid := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRowUid]))
 	offset += SzRowUid
-	nextUid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRowUid]))
+	nextUid := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRowUid]))
 	offset += SzRowUid
 	for i, field := range fields {
 		fType := field.GetFType()
 		length := FTypeLength[fType]
 		if length == VARIABLE {
 			// 变长字段
-			length = int64(binary.BigEndian.Uint64(raw[offset : offset+SzVariableLength]))
+			length = int64(binary.LittleEndian.Uint64(raw[offset : offset+SzVariableLength]))
 			offset += SzVariableLength
 		}
 		value, err := getFTypeValue(fType, raw[offset:offset+length])
@@ -111,16 +111,16 @@ func (r *RowImplFactory) NewRow(uid int64, tb Table, raw []byte) Row {
 
 func WrapRowRaw(tb Table, rType RowType, prevRowUid, nextRowUid int64, values []any) ([]byte, error) {
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.BigEndian, rType)
-	_ = binary.Write(buffer, binary.BigEndian, prevRowUid)
-	_ = binary.Write(buffer, binary.BigEndian, nextRowUid)
+	_ = binary.Write(buffer, binary.LittleEndian, rType)
+	_ = binary.Write(buffer, binary.LittleEndian, prevRowUid)
+	_ = binary.Write(buffer, binary.LittleEndian, nextRowUid)
 	cnt := len(values)
 	fields := tb.GetFields()
 	for i := 0; i < cnt; i++ {
 		if bytes, err := fieldValueToBytes(fields[i].GetFType(), values[i]); err != nil {
 			return nil, err
 		} else {
-			_ = binary.Write(buffer, binary.BigEndian, bytes)
+			_ = binary.Write(buffer, binary.LittleEndian, bytes)
 		}
 	}
 	return buffer.Bytes(), nil
