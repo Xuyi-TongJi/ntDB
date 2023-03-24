@@ -210,7 +210,7 @@ func buildCreateTrie() *Trie {
 	}
 	endNode := currentNode.child["}"]
 	currentNode.child[","] = &Node{
-		2, 3, ",", nil,
+		2, 3, ",", map[string]*Node{},
 	}
 	currentNode = currentNode.child[","]
 	currentNode.child[","] = currentNode // 自环

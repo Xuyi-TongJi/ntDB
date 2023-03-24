@@ -85,19 +85,14 @@ func (c *Connection) startReader() {
 
 // startWriter 向当前连接写数据的模块
 func (c *Connection) startWriter() {
-	fmt.Printf("[Connection Writer Goroutine] Connection %d writer gouroutine is running. Romote addr = %s\n",
-		c.ConnId, c.GetClientTcpStatus().String())
 	defer fmt.Printf("[Connection Writer Goroutine] %s Connection %d was closed, writer goroutine closed\n",
 		c.GetClientTcpStatus().String(), c.GetConnId())
 	for {
 		select {
 		case data := <-c.MessageChan:
 			if _, err := c.GetTcpConnection().Write(data); err != nil {
-				fmt.Printf("[Connection Writer Goroutine ERROR] Connection %d writing back error: %s\n", c.ConnId, err)
+				c.Stop()
 				return
-			} else {
-				fmt.Printf("[Connection Writer Goroutine] Connection %d writing back to the client success\n",
-					c.ConnId)
 			}
 		case <-c.ExitChan:
 			// Reader已经退出
@@ -144,25 +139,9 @@ func (c *Connection) GetClientTcpStatus() net.Addr {
 }
 
 // SendMessage 将数据封包为二进制数据并发送给写协程
-func (c *Connection) SendMessage(msgId uint32, data []byte) error {
-	if c.IsClosed {
-		return errors.New(fmt.Sprintf("[Connection Writing GoRoutine] Connection %d was closed\n", c.ConnId))
-	}
-	dp := DataPack{}
-	msg := &Message{
-		Id: msgId,
-		// TODO
-		//Len:  uint32(len(data)),
-		//Data: data,
-	}
-	// pack (message to binary data)
-	binaryData, err := dp.Pack(msg)
-	if err != nil {
-		return errors.New(fmt.Sprintf("[Connection Writing GoRoutine] Connection %d, packing message error: %s\n", c.ConnId, err))
-	}
+func (c *Connection) SendMessage(data []byte) {
 	// 将data发送给写协程
-	c.MessageChan <- binaryData
-	return nil
+	c.MessageChan <- data
 }
 
 func (c *Connection) SetConnectionProperty(key string, value interface{}) {

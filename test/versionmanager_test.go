@@ -7,5 +7,5 @@ import (
 )
 
 func TestVm(t *testing.T) {
-	_ = versionManager.NewVersionManager("test", 1<<16, &sync.RWMutex{})
+	_ = versionManager.NewVersionManager("test", 1<<16, &sync.RWMutex{}, 1)
 }

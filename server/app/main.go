@@ -6,11 +6,11 @@ import (
 )
 
 func main() {
+	// Server
 	s := network.NewServer("tcp4")
-	/* Config Router */
-	s.AddRouter(0, &PingRouter{name: "ping router"})
-	s.AddRouter(1, &HelloRouter{name: "hello router"})
-	/* Config Hook */
+	// Database
+	db := network.NewDbRouter(utils.GlobalObj.Path, utils.GlobalObj.BufferPoolMemory, utils.GlobalObj.Iso)
+	s.AddRouter(network.DbRouterMsgId, db)
 	utils.GlobalObj.TcpServer = s
 	s.Serve()
 }

@@ -25,8 +25,6 @@ type Page interface {
 	GetPageType() PageType
 	IsMetaPage() bool
 	IsDataPage() bool
-
-	// Remove(toRem []byte, offset int64) error // Remove 删除数据
 }
 
 type PageType int32
@@ -174,18 +172,6 @@ func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	p.SetDirty(true)
 	return nil
 }
-
-//func (p *PageImpl) Remove(toRem []byte, offset int64) error {
-//	p.Lock()
-//	defer p.Lock()
-//	length := int64(len(toRem))
-//	currentLength := p.GetUsed()
-//	if length+offset == currentLength {
-//		p.SetUsed(int32(offset))
-//		p.SetDirty(true)
-//	}
-//	return nil
-//}
 
 func (p *PageImpl) GetUsed() int64 {
 	p.lock.RLock()

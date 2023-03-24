@@ -22,20 +22,21 @@ type VersionManager interface {
 	Delete(xid, uid, tbUid int64) error
 	CreateReadView(xid int64) *ReadView // 创建读视图
 
-	Begin(level IsolationLevel) int64
+	Begin() int64
 	Commit(xid int64)
 	Abort(xid int64)
 }
 
 type VmImpl struct {
-	dm           dataManager.DataManager
-	tm           transactions.TransactionManager
-	undo         Log
-	activeTrans  map[int64]*Transaction
-	nextXid      int64 // 下一个事物的xid
-	minActiveXid int64 // 当前活跃的事物最小xid
-	lt           LockTable
-	lock         *sync.RWMutex
+	dm             dataManager.DataManager
+	tm             transactions.TransactionManager
+	undo           Log
+	activeTrans    map[int64]*Transaction
+	nextXid        int64 // 下一个事物的xid
+	minActiveXid   int64 // 当前活跃的事物最小xid
+	lt             LockTable
+	lock           *sync.RWMutex
+	isolationLevel IsolationLevel
 }
 
 const (
@@ -184,11 +185,11 @@ func (v *VmImpl) CreateReadView(xid int64) *ReadView {
 
 // Begin
 // 开启一个新的事物
-func (v *VmImpl) Begin(level IsolationLevel) int64 {
+func (v *VmImpl) Begin() int64 {
 	v.lock.Lock()
 	defer v.lock.Unlock()
 	xid := v.tm.Begin()
-	trans := NewTransaction(xid, level, v)
+	trans := NewTransaction(xid, v.isolationLevel, v)
 	if xid+1 > v.nextXid {
 		v.nextXid = xid + 1
 	}
@@ -359,7 +360,7 @@ func (v *VmImpl) changeMinXid(xid int64) {
 	}
 }
 
-func NewVersionManager(path string, memory int64, lock *sync.RWMutex) VersionManager {
+func NewVersionManager(path string, memory int64, lock *sync.RWMutex, isolationLevel IsolationLevel) VersionManager {
 	tm := transactions.NewTransactionManagerImpl(path)
 	dm := dataManager.OpenDataManager(path, memory, tm)
 	undo := OpenUndoLog(path, &sync.Mutex{})

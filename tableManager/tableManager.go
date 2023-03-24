@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"myDB/config"
 	"myDB/indexManager"
 	"myDB/transactions"
 	"myDB/versionManager"
@@ -80,7 +79,7 @@ func (err *ErrorUnsupportedOperationType) Error() string {
 }
 
 func (tm *TMImpl) Begin() int64 {
-	return tm.vm.Begin(config.IsolationLevel)
+	return tm.vm.Begin()
 }
 
 func (tm *TMImpl) Commit(xid int64) {
@@ -719,9 +718,9 @@ func matchWhereCondition(row Row, table Table, where *Where) bool {
 	}
 }
 
-func NewTableManager(path string, memory int64, mutex *sync.RWMutex) TableManager {
+func NewTableManager(path string, memory int64, mutex *sync.RWMutex, level versionManager.IsolationLevel) TableManager {
 	tm := &TMImpl{
-		vm: versionManager.NewVersionManager(path, memory, &sync.RWMutex{}),
+		vm: versionManager.NewVersionManager(path, memory, &sync.RWMutex{}, level),
 		// TODO indexManager
 		tables:   map[string]int64{},
 		tableUid: map[int64]string{},
@@ -750,7 +749,7 @@ func NewTableManager(path string, memory int64, mutex *sync.RWMutex) TableManage
 		tm.bootFile = f
 	}
 	// delete TMP
-	if err := os.Remove(TMP + bootFileSuf); err != nil {
+	if err := os.Remove(TMP + bootFileSuf); err != nil && !errors.Is(err, os.ErrNotExist) {
 		panic("Error occurs when initializing table manager")
 	}
 	tm.init()

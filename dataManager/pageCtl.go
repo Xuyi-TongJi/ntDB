@@ -2,6 +2,7 @@ package dataManager
 
 import (
 	"fmt"
+	"log"
 	. "myDB/dataStructure"
 	"sync"
 )
@@ -137,4 +138,5 @@ func (pi *PageCtlImpl) Init(pc PageCache) {
 			}
 		}
 	}
+	log.Printf("[DataManager] Initialize page control\n")
 }

@@ -57,7 +57,7 @@ type FieldCreate struct {
 // RESPONSE
 
 type ResponseObject struct {
-	Payload string
-	RowId   int
-	ColId   int
+	Payload string `json:"Payload"`
+	RowId   int    `json:"RowId"`
+	ColId   int    `json:"ColId"`
 }
