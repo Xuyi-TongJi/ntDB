@@ -12,12 +12,8 @@ func (r *Request) GetConnection() iface.IConnection {
 	return r.conn
 }
 
-func (r *Request) GetData() []byte {
-	return r.message.GetData()
-}
-
-func (r *Request) GetDataLen() uint32 {
-	return r.message.GetLen()
+func (r *Request) GetArgs() []string {
+	return r.message.GetArgs()
 }
 
 func (r *Request) GetMsgId() uint32 {

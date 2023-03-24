@@ -2,6 +2,8 @@ package network
 
 import "myDB/server/iface"
 
+const DbRouterMsgId = 0x3f
+
 /*
 	路由模块，实现路由接口
 	不同消息对应不同的处理方式

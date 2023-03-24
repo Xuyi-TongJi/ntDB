@@ -11,4 +11,5 @@ type IServer interface {
 	SetOnConnectionStop(hook func(connection IConnection))
 	CallOnConnectionStart(connection IConnection)
 	CallOnConnectionStop(connection IConnection)
+	GetMaxPackingSize() uint32
 }

@@ -120,6 +120,10 @@ func (s *Server) CallOnConnectionStop(connection iface.IConnection) {
 	}
 }
 
+func (s *Server) GetMaxPackingSize() uint32 {
+	return s.MaxPackingSize
+}
+
 // NewServer 初始化Server模块的方法
 func NewServer(ipVersion string) iface.IServer {
 	return &Server{

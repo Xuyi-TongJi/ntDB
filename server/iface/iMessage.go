@@ -7,13 +7,5 @@ package iface
 type IMessage interface {
 	GetMsgId() uint32
 
-	GetLen() uint32
-
-	GetData() []byte
-
-	SetMsgId(id uint32)
-
-	SetLen(len uint32)
-
-	SetData(data []byte)
+	GetArgs() []string
 }

@@ -3,10 +3,13 @@ package network
 import (
 	"errors"
 	"fmt"
-	"io"
+	"log"
+	util "myDB/dataStructure"
 	"myDB/server/iface"
 	"myDB/server/utils"
 	"net"
+	"strconv"
+	"strings"
 
 	"sync"
 )
@@ -21,6 +24,17 @@ type Connection struct {
 	MsgHandler   iface.IMessageHandler
 	PropertyMap  map[string]interface{}
 	PropertyLock sync.RWMutex
+
+	// request
+	queryBuffer            []byte
+	queryLength            int
+	args                   []string
+	bulkNum                int
+	bulkLength             int
+	isQueryProcessing      bool
+	canDoNextCommandHandle bool
+	reply                  util.LinkedList
+	sentLength             int // 还未发送完的reply
 }
 
 // startReader 从当前连接读数据的模块
@@ -33,41 +47,38 @@ func (c *Connection) startReader() {
 		c.Stop()
 	}()
 	for {
-		// read data from client to buffer and call the handle function
-		// 拆包 -> Message
-		dp := &DataPack{}
-		headData := make([]byte, dp.GetHeadLen())
-		_, err := io.ReadFull(c.Conn, headData)
+		maxQueryLength := int(c.TcpServer.GetMaxPackingSize())
+		c.expandQueryBufIfNeeded()
+		// Read
+		n, err := c.Conn.Read(c.queryBuffer[c.queryLength:])
 		if err != nil {
-			fmt.Printf("[Connection Reader Goroutine ERROR] Connection %d, error reading head data, err:%s\n", c.ConnId, err)
-			break
+			log.Printf("[READ QUERY FROM CLIENT ERROR] Read query from client %d error, err = %s\n", c.ConnId, err)
+			c.Stop()
+			return
 		}
-		msg, err := dp.Unpack(headData)
-		if err != nil {
-			fmt.Printf("[Connection Reader Goroutine ERROR] Connection %d, invalid message id or data, message id = %d, len = %d, err:%s\n",
-				c.ConnId, msg.GetMsgId(), msg.GetLen(), err)
-			break
+		c.queryLength += n
+		if c.queryLength > maxQueryLength {
+			log.Printf("[READ QUERY FROM CLIENT ERROR] Client %d query length overflow error\n", c.ConnId)
+			c.Stop()
+			return
 		}
-		// read data by the tag of data len
-		if msg.GetLen() > 0 {
-			msg.SetData(make([]byte, msg.GetLen()))
-			_, err = io.ReadFull(c.Conn, msg.GetData())
-			if err != nil {
-				fmt.Printf("[Connection Reader Goroutine ERROR] Connection %d, invalid message id or data, message id = %d, len = %d, err:%s\n",
-					c.ConnId, msg.GetMsgId(), msg.GetLen(), err)
-				break
+		if err := c.processRequest(); err != nil {
+			c.Stop()
+		}
+		if c.canDoNextCommandHandle {
+			req := Request{
+				conn:    c,
+				message: &Message{Id: DbRouterMsgId, args: c.args},
 			}
-		}
-		// 得到当前conn数据的Request
-		req := Request{
-			conn:    c,
-			message: msg,
-		}
-		if utils.GlobalObj.WorkerPoolSize > 0 {
-			// 将请求交给Message Handler 执行具体的业务逻辑
-			c.MsgHandler.SubmitTask(&req)
-		} else {
-			go c.MsgHandler.DoHandle(&req)
+			c.canDoNextCommandHandle = false
+			c.isQueryProcessing = true
+			c.args = make([]string, 0)
+			if utils.GlobalObj.WorkerPoolSize > 0 {
+				// 有工作池池对象，将请求交给Message Handler 执行具体的业务逻辑
+				c.MsgHandler.SubmitTask(&req)
+			} else {
+				go c.MsgHandler.DoHandle(&req)
+			}
 		}
 	}
 }
@@ -98,9 +109,9 @@ func (c *Connection) startWriter() {
 // Start 启动连接，业务逻辑是启动一个读数据业务和一个写数据的业务
 func (c *Connection) Start() {
 	fmt.Printf("[Connection START] Connection %d starting\n", c.ConnId)
+	c.TcpServer.CallOnConnectionStart(c)
 	go c.startReader()
 	go c.startWriter()
-	c.TcpServer.CallOnConnectionStart(c)
 }
 
 func (c *Connection) Stop() {
@@ -139,9 +150,10 @@ func (c *Connection) SendMessage(msgId uint32, data []byte) error {
 	}
 	dp := DataPack{}
 	msg := &Message{
-		Id:   msgId,
-		Len:  uint32(len(data)),
-		Data: data,
+		Id: msgId,
+		// TODO
+		//Len:  uint32(len(data)),
+		//Data: data,
 	}
 	// pack (message to binary data)
 	binaryData, err := dp.Pack(msg)
@@ -195,4 +207,106 @@ func NewConnection(server iface.IServer, conn *net.TCPConn, id uint32, msgHandle
 	}
 	c.TcpServer.GetConnectionManager().Add(c)
 	return c
+}
+
+// processRequest 处理请求 功能：将请求string转为Client对象中的args
+// 1. 获取请求协议类型[INLINE/BULK]
+// 2. 将请求[]byte解析道client.args
+// TODO 解析发生错误，则断开连接
+// 未完整解析一条指令，则保留queryBuffer和queryLength，到下一次Read(readQueryFromClient)返回后再处理
+// 处理一定是从queryBuffer的第一个字节开始
+func (c *Connection) processRequest() error {
+	// 只要缓冲区还有未处理的queryBuffer就进行处理
+	for c.queryLength > 0 {
+		// 没有处理到一半的请求
+		// query -> args
+		if err := c.handleBulkRequest(); err != nil {
+			return err
+		}
+		// 不能进行下一次processCommand(没有完整解析，即完整Read完整这一条指令),则break，等待下一次Read
+		if !c.canDoNextCommandHandle {
+			break
+		}
+	}
+	return nil
+}
+
+// handleBulkRequest 解析Bulk请求string
+// query string -> client.args
+// 滑动窗口
+// error -> 解析发生错误，则返回error，断开连接
+func (c *Connection) handleBulkRequest() error {
+	// new request -> bulkNum == 0
+	if c.bulkNum == 0 {
+		crlfIndex := c.findCrlfFromQueryBuffer()
+		if crlfIndex == -1 {
+			return errors.New(fmt.Sprintf("Query Length overflows\n"))
+		}
+		bNum, err := c.getNumberFromQueryBuffer(1, crlfIndex)
+		if err != nil {
+			return errors.New("illegal client protocol format, illegal bulk number")
+		}
+		c.isQueryProcessing = true
+		c.canDoNextCommandHandle = false
+		c.bulkNum = bNum
+		// move sliding window
+		c.queryBuffer = append(c.queryBuffer[crlfIndex+2:])
+		c.queryLength -= crlfIndex + 2
+	}
+	for c.bulkNum > 0 {
+		if len(c.queryBuffer) == 0 {
+			break
+		}
+		// find bulkLength
+		if c.bulkLength == 0 {
+			if c.queryBuffer[0] != '$' {
+				return errors.New("illegal client protocol format, illegal bulk length symbol")
+			}
+			crlfIndex := c.findCrlfFromQueryBuffer()
+			if crlfIndex == -1 {
+				break
+			}
+			bLength, err := c.getNumberFromQueryBuffer(1, crlfIndex)
+			if err != nil {
+				return errors.New("illegal client protocol format, illegal bulk length")
+			}
+			c.bulkLength = bLength
+			// move sliding window
+			c.queryBuffer = append(c.queryBuffer[crlfIndex+2:])
+			c.queryLength -= crlfIndex + 2
+		}
+		// find next string element (based on bulkLength)
+		if c.queryLength < c.bulkLength+2 {
+			break
+		}
+		// build client arg
+		newArg := string(c.queryBuffer[:c.bulkLength])
+		c.args = append(c.args, newArg)
+		c.queryBuffer = append(c.queryBuffer[c.bulkLength+2:])
+		c.queryLength -= c.bulkLength + 2
+		c.bulkLength = 0
+		c.bulkNum -= 1
+	}
+	// 下一次command可以执行
+	if c.bulkNum == 0 {
+		c.isQueryProcessing = false
+		c.canDoNextCommandHandle = true
+	}
+	return nil
+}
+
+// findCrlfFromQueryBuffer
+// CRLF: \r\n
+func (c *Connection) findCrlfFromQueryBuffer() int {
+	return strings.Index(string(c.queryBuffer[:c.queryLength]), "\r\n")
+}
+
+func (c *Connection) getNumberFromQueryBuffer(startIndex, endIndex int) (int, error) {
+	return strconv.Atoi(string(c.queryBuffer[startIndex:endIndex]))
+}
+
+func (c *Connection) expandQueryBufIfNeeded() {
+	if len(c.queryBuffer)-c.queryLength < int(c.TcpServer.GetMaxPackingSize()) {
+		c.queryBuffer = append(c.queryBuffer, make([]byte, int(c.TcpServer.GetMaxPackingSize()))...)
+	}
 }
