@@ -23,10 +23,9 @@ func NewMessageHandler() iface.IMessageHandler {
 
 // DoHandle 执行业务的和新方法：执行request所绑定的Router的业务
 func (m *MessageHandler) DoHandle(request iface.IRequest) {
-	msgId := request.GetMsgId()
-	if router, exist := m.ApiMap[msgId]; !exist {
+	if router, exist := m.ApiMap[DbRouterMsgId]; !exist {
 		fmt.Printf("[MessageHandler Handle Router ERROR] Message id = " +
-			strconv.Itoa(int(msgId)) + ", missing router\n")
+			strconv.Itoa(int(DbRouterMsgId)) + ", missing router\n")
 	} else {
 		// 调用router的模版方法
 		iface.Handle(router, request)
@@ -70,8 +69,8 @@ func (m *MessageHandler) startWorker(taskQueue chan iface.IRequest, workerId int
 func (m *MessageHandler) SubmitTask(request iface.IRequest) {
 	// 调度算法 -> 轮询分配 find a worker to handle this request
 	workerId := request.GetConnection().GetConnId() % m.WorkerPoolSize
-	fmt.Printf("[Message Handler Submit Task] Submit task %d to worker %d, connection id = %d\n",
-		request.GetMsgId(), workerId, request.GetConnection().GetConnId())
+	fmt.Printf("[Message Handler Submit Task] Submit task to worker %d, connection id = %d\n",
+		workerId, request.GetConnection().GetConnId())
 	// send request to task queue of this worker
 	m.TaskQueue[workerId] <- request
 }

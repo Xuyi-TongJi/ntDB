@@ -117,10 +117,10 @@ func WrapRowRaw(tb Table, rType RowType, prevRowUid, nextRowUid int64, values []
 	cnt := len(values)
 	fields := tb.GetFields()
 	for i := 0; i < cnt; i++ {
-		if bytes, err := fieldValueToBytes(fields[i].GetFType(), values[i]); err != nil {
+		if toBytes, err := fieldValueToBytes(fields[i].GetFType(), values[i]); err != nil {
 			return nil, err
 		} else {
-			_ = binary.Write(buffer, binary.LittleEndian, bytes)
+			_ = binary.Write(buffer, binary.LittleEndian, toBytes)
 		}
 	}
 	return buffer.Bytes(), nil

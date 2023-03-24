@@ -30,11 +30,13 @@ type TableManager interface {
 	Update(xid int64, update *Update) error                 // update fields
 	Delete(xid int64, delete *Delete) error                 // delete
 
-	LoadField(tb Table, uid int64) Field
 	CreateField(xid int64, fieldName string, fieldType FieldType, indexed bool) (Field, error)
-
-	LoadTable(uid int64) Table
 	CreateTable(xid int64, tableName string, fields []*FieldCreate) (Table, error)
+
+	// TODO ADD INDEX
+
+	loadField(tb Table, uid int64) Field
+	loadTable(uid int64) Table
 }
 
 const (
@@ -110,13 +112,15 @@ func (tm *TMImpl) Show(xid int64) ([]*ResponseObject, error) {
 }
 
 func (tm *TMImpl) Create(xid int64, create *Create) error {
-	_, err := tm.CreateTable(xid, create.tbName, create.fields)
+	_, err := tm.CreateTable(xid, create.TbName, create.Fields)
 	return err
 }
 
+// Insert
+// 需要修改主键
 func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 	// check valid
-	if uid, err := tm.getTbUid(insert.tbName); err != nil {
+	if uid, err := tm.getTbUid(insert.TbName); err != nil {
 		return err
 	} else {
 		record := tm.vm.Read(xid, uid)
@@ -126,19 +130,31 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// 该表对当前事物可见
 		// check valid
-		insertValueCount := len(insert.values)
+		insertValueCount := len(insert.Values)
 		if insertValueCount != len(tb.GetFields())-1 {
 			return &ErrorInvalidFieldCount{}
 		}
 		// TODO INDEX
-		if raw, err := WrapRowRaw(tb, RECORD, int64(0), tb.GetFirstRecordUid(), insert.values); err != nil {
+
+		// add primary key
+		values := make([]any, len(insert.Values)+1)
+		values[0] = tb.GetPrimaryKey()
+		for i, value := range insert.Values {
+			// to value
+			if ret, err := traverseStringToValue(tb.GetFields()[i+1].GetFType(), value); err != nil {
+				return err
+			} else {
+				values[i+1] = ret
+			}
+		}
+		if raw, err := WrapRowRaw(tb, RECORD, int64(0), tb.GetFirstRecordUid(), values); err != nil {
 			return err
 		} else {
 			uid, err := tm.vm.Insert(xid, raw, tb.GetUid())
 			if err != nil {
 				return err
 			}
-			newTableRaw := WrapTableRaw(insert.tbName, tb.GetNextUid(), tb.GetFields(), uid)
+			newTableRaw := WrapTableRaw(insert.TbName, tb.GetNextUid(), tb.GetFields(), uid, tb.GetPrimaryKey()+1)
 			// 当前事物一定已经获取表锁, 这个Update和上面的Insert一定是原子的
 			newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTableRaw)
 			// **** newUid must equal to the current one
@@ -157,7 +173,7 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 // Read
 // Select请求读取数据
 func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
-	uid, err := tm.getTbUid(sel.tbName)
+	uid, err := tm.getTbUid(sel.TbName)
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +182,8 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 	} else {
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// check where condition valid
-		if sel.where != nil && sel.where.compare != nil {
-			if err := tm.checkWhereCondition(tb, sel); err != nil {
+		if sel.Where != nil && sel.Where.Compare != nil {
+			if err := tm.checkWhereCondition(tb, sel.Where); err != nil {
 				return nil, err
 			}
 		}
@@ -176,7 +192,7 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 			rows []Row
 			err  error
 		)
-		if sel.readForUpdate {
+		if sel.ReadForUpdate {
 			rows, err = tm.searchAllForUpdate(xid, tb)
 		} else {
 			rows, err = tm.searchAll(xid, tb)
@@ -186,7 +202,7 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 		}
 		targetFieldsId := make([]int, 0)
 		for i, field := range tb.GetFields() {
-			for _, fN := range sel.fNames {
+			for _, fN := range sel.FNames {
 				if field.GetName() == fN {
 					targetFieldsId = append(targetFieldsId, i)
 					break
@@ -195,18 +211,18 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 		}
 		rowCnt := 1
 		// title
-		response := tm.wrapTableResponseTitle(sel.fNames)
+		response := tm.wrapTableResponseTitle(sel.FNames)
 		// addResponse
 		for _, row := range rows {
-			if matchWhereCondition(row, tb, sel.where) {
+			if matchWhereCondition(row, tb, sel.Where) {
 				colCnt := 0
 				for _, target := range targetFieldsId {
 					// row.GetValues[target]
 					value, _ := fieldValueToBytes(tb.GetFields()[target].GetFType(), row.GetValues()[target])
 					response = append(response, &ResponseObject{
-						payload: string(value),
-						rowId:   rowCnt,
-						colId:   colCnt,
+						Payload: string(value),
+						RowId:   rowCnt,
+						ColId:   colCnt,
 					})
 					colCnt += 1
 				}
@@ -220,11 +236,7 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 // Update
 // 上层必须确保在遇到error时回滚
 func (tm *TMImpl) Update(xid int64, update *Update) error {
-	sel := update.sel
-	if !sel.readForUpdate {
-		return &ErrorUnsupportedOperationType{}
-	}
-	uid, err := tm.getTbUid(sel.tbName)
+	uid, err := tm.getTbUid(update.TName)
 	if err != nil {
 		return err
 	}
@@ -235,7 +247,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 		// check update valid
 		var target = -1
 		for i, field := range tb.GetFields() {
-			if field.GetName() == update.fName {
+			if field.GetName() == update.FName {
 				target = i
 				break
 			}
@@ -243,12 +255,14 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 		if target == -1 {
 			return &ErrorInvalidFieldName{}
 		}
-		if err := checkValueMatch(tb.GetFields()[target].GetFType(), update.toUpdate); err != nil {
+		var value any
+		value, err := traverseStringToValue(tb.GetFields()[target].GetFType(), update.ToUpdate)
+		if err != nil {
 			return err
 		}
 		// check where
-		if sel.where != nil && sel.where.compare != nil {
-			if err := tm.checkWhereCondition(tb, sel); err != nil {
+		if update.Where != nil && update.Where.Compare != nil {
+			if err := tm.checkWhereCondition(tb, update.Where); err != nil {
 				return err
 			}
 		}
@@ -260,10 +274,10 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 				return err
 			}
 			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
-			if matchWhereCondition(row, tb, sel.where) {
+			if matchWhereCondition(row, tb, update.Where) {
 				// update value
 				updateValues := row.GetValues()
-				updateValues[target] = update.toUpdate
+				updateValues[target] = value
 				if raw, err := WrapRowRaw(tb, RECORD, row.GetNextUid(), row.GetNextUid(), updateValues); err != nil {
 					tm.Abort(xid)
 					return err
@@ -302,7 +316,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 							}
 						} else {
 							// rewrite the table
-							tableRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid)
+							tableRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
 							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
 							if newTableUid != tb.GetUid() {
 								panic("Fatal Error occurs when updating table metadata raw")
@@ -348,11 +362,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 // Delete
 // 如果没有where子句，则代表删除全表所有的数据
 func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
-	sel := delete.sel
-	if !sel.readForUpdate {
-		return &ErrorUnsupportedOperationType{}
-	}
-	uid, err := tm.getTbUid(sel.tbName)
+	uid, err := tm.getTbUid(delete.TName)
 	if err != nil {
 		return err
 	}
@@ -361,8 +371,8 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 	} else {
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// check where
-		if sel.where != nil && sel.where.compare != nil {
-			if err := tm.checkWhereCondition(tb, sel); err != nil {
+		if delete.Where != nil && delete.Where.Compare != nil {
+			if err := tm.checkWhereCondition(tb, delete.Where); err != nil {
 				return err
 			}
 		} else {
@@ -380,14 +390,14 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 				return err
 			}
 			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
-			if matchWhereCondition(row, tb, sel.where) {
+			if matchWhereCondition(row, tb, delete.Where) {
 				if err := tm.vm.Delete(xid, row.GetUid(), tb.GetUid()); err != nil {
 					tm.Abort(xid)
 					return err
 				}
 				if row.GetPrevUid() == 0 {
 					// update table
-					newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid())
+					newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid(), tb.GetPrimaryKey())
 					if newTbUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
 						tm.Abort(xid)
 						return err
@@ -438,7 +448,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 	return nil
 }
 
-func (tm *TMImpl) LoadField(tb Table, uid int64) Field {
+func (tm *TMImpl) loadField(tb Table, uid int64) Field {
 	record := tm.vm.Read(transactions.SuperXID, uid)
 	if record == nil {
 		panic(fmt.Sprintf("Error occurs when loading metadata of field"))
@@ -465,7 +475,7 @@ func (tm *TMImpl) CreateField(xid int64, fieldName string, fieldType FieldType, 
 	}
 }
 
-func (tm *TMImpl) LoadTable(uid int64) Table {
+func (tm *TMImpl) loadTable(uid int64) Table {
 	record := tm.vm.Read(transactions.SuperXID, uid)
 	if record == nil {
 		panic(fmt.Sprintf("Error occurs when loading metadata of table"))
@@ -482,13 +492,21 @@ func (tm *TMImpl) CreateTable(xid int64, tableName string, fields []*FieldCreate
 	// CreateField
 	fs := make([]Field, len(fields))
 	for i, fc := range fields {
-		field, err := tm.CreateField(xid, fc.fName, fc.fType, fc.indexed)
+		fType, err1 := TransToFieldType(fc.FType)
+		if err1 != nil {
+			return nil, err1
+		}
+		indexed, err2 := TransIndexed(fc.Indexed)
+		if err2 != nil {
+			return nil, err2
+		}
+		field, err := tm.CreateField(xid, fc.FName, fType, indexed)
 		if err != nil {
 			return nil, err
 		}
 		fs[i] = field // Field的raw和table信息无关
 	}
-	raw := WrapTableRaw(tableName, tm.topTableUid, fs, 0)
+	raw := WrapTableRaw(tableName, tm.topTableUid, fs, 0, 0)
 	if uid, err := tm.vm.Insert(xid, raw, versionManager.MetaDataTbUid); err != nil {
 		return nil, err
 	} else {
@@ -591,7 +609,7 @@ func (tm *TMImpl) deleteAll(xid int64, tb Table) error {
 			}
 		}
 		// update table
-		newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), int64(0))
+		newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), int64(0), tb.GetPrimaryKey())
 		if newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
 			return err
 		} else {
@@ -623,16 +641,16 @@ func (tm *TMImpl) getTbName(tbUid int64) (string, error) {
 	}
 }
 
-func (tm *TMImpl) checkWhereCondition(tb Table, sel *Select) error {
-	if sel == nil || sel.where == nil || sel.where.compare == nil {
+func (tm *TMImpl) checkWhereCondition(tb Table, where *Where) error {
+	if where == nil || where.Compare == nil {
 		return nil
 	}
-	fieldName := sel.where.compare.fieldName
+	fieldName := where.Compare.FieldName
 	find := false
 	for _, field := range tb.GetFields() {
 		if field.GetName() == fieldName {
 			find = true
-			if err := checkValueMatch(field.GetFType(), sel.where.compare.value); err != nil {
+			if _, err := traverseStringToValue(field.GetFType(), where.Compare.Value); err != nil {
 				return err
 			}
 			break
@@ -651,9 +669,9 @@ func (tm *TMImpl) wrapTableResponseTitle(fName []string) []*ResponseObject {
 	res := make([]*ResponseObject, len(fName))
 	for i, fN := range fName {
 		res[i] = &ResponseObject{
-			payload: fN,
-			rowId:   rowCnt,
-			colId:   colCnt,
+			Payload: fN,
+			RowId:   rowCnt,
+			ColId:   colCnt,
 		}
 		colCnt += 1
 	}
@@ -664,7 +682,7 @@ func matchWhereCondition(row Row, table Table, where *Where) bool {
 	if where == nil {
 		return true
 	}
-	comparedField := where.compare.fieldName
+	comparedField := where.Compare.FieldName
 	var target int
 	for i, field := range table.GetFields() {
 		if field.GetName() == comparedField {
@@ -673,9 +691,9 @@ func matchWhereCondition(row Row, table Table, where *Where) bool {
 		}
 	}
 	value1 := row.GetValues()[target]
-	value2 := where.compare.value
+	value2 := where.Compare.Value
 	compareFunction := DefaultFieldFactory.GetCompareFunction(table.GetFields()[target].GetFType())
-	switch where.compare.compareTo {
+	switch where.Compare.CompareTo {
 	case "=":
 		{
 			return compareFunction(value1, value2) == 0

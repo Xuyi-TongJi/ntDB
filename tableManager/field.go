@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"myDB/indexManager"
+	"strconv"
+	"strings"
 )
 
 func init() {
@@ -172,16 +174,28 @@ func (err *ErrorInvalidFType) Error() string {
 }
 
 func TransToFieldType(typeStr string) (FieldType, error) {
+	typeStr = strings.ToUpper(typeStr)
 	switch typeStr {
-	case "int32":
+	case "INT32":
 		return INT32, nil
-	case "int64":
+	case "INT64":
 		return INT64, nil
-	case "string":
+	case "STRING":
 		return STRING, nil
 	default:
 		return INVALID, &ErrorInvalidFType{}
 	}
+}
+
+func TransIndexed(indexed string) (bool, error) {
+	indexed = strings.ToUpper(indexed)
+	switch indexed {
+	case "INDEXED":
+		return true, nil
+	case "":
+		return false, nil
+	}
+	return false, &ErrorUnsupportedOperationType{}
 }
 
 type ErrorFTypeInvalid struct{}
@@ -247,26 +261,28 @@ func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func checkValueMatch(fType FieldType, value any) error {
+func traverseStringToValue(fType FieldType, value string) (any, error) {
 	switch fType {
 	case INT32:
 		{
-			if _, available := value.(int32); !available {
-				return &ErrorValueNotMatch{}
+			ret, err := strconv.ParseInt(value, 10, 32)
+			if err != nil {
+				return nil, &ErrorValueNotMatch{}
 			}
+			return int32(ret), nil
 		}
 	case INT64:
 		{
-			if _, available := value.(int64); !available {
-				return &ErrorValueNotMatch{}
+			ret, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return nil, &ErrorValueNotMatch{}
 			}
+			return ret, nil
 		}
 	case STRING:
 		{
-			if _, available := value.(string); !available {
-				return &ErrorValueNotMatch{}
-			}
+			return value, nil
 		}
 	}
-	return nil
+	return nil, &ErrorFTypeInvalid{}
 }
