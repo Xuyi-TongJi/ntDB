@@ -1,6 +1,7 @@
 package storageEngine
 
 import (
+	"log"
 	"myDB/tableManager"
 	"myDB/versionManager"
 	"sync"
@@ -65,7 +66,9 @@ func (se *NtStorageEngine) Delete(xid int64, delete *tableManager.Delete) error 
 }
 
 func NewStorageEngine(path string, memory int64, level versionManager.IsolationLevel) StorageEngine {
-	return &NtStorageEngine{
+	se := &NtStorageEngine{
 		tm: tableManager.NewTableManager(path, memory, &sync.RWMutex{}, level),
 	}
+	log.Printf("[Storage Engine] Start storage engine\n")
+	return se
 }

@@ -3,6 +3,7 @@ package versionManager
 import (
 	"errors"
 	"fmt"
+	"log"
 	"myDB/dataManager"
 	"myDB/transactions"
 	"sync"
@@ -365,6 +366,7 @@ func NewVersionManager(path string, memory int64, lock *sync.RWMutex, isolationL
 	dm := dataManager.OpenDataManager(path, memory, tm)
 	undo := OpenUndoLog(path, &sync.Mutex{})
 	lt := NewLockTable()
+	log.Printf("[Version Manager] Initialze version manager\n")
 	return &VmImpl{
 		dm: dm, tm: tm, undo: undo, lock: lock,
 		activeTrans: map[int64]*Transaction{},

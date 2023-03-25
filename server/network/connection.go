@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	util "myDB/dataStructure"
 	"myDB/server/iface"
 	"myDB/server/utils"
 	"net"
@@ -23,7 +22,7 @@ type Connection struct {
 	MessageChan  chan []byte
 	MsgHandler   iface.IMessageHandler
 	PropertyMap  map[string]interface{}
-	PropertyLock sync.RWMutex
+	PropertyLock sync.RWMutex // possible to delete
 
 	// request
 	queryBuffer            []byte
@@ -33,16 +32,14 @@ type Connection struct {
 	bulkLength             int
 	isQueryProcessing      bool
 	canDoNextCommandHandle bool
-	reply                  util.LinkedList
-	sentLength             int // 还未发送完的reply
 }
 
 // startReader 从当前连接读数据的模块
 func (c *Connection) startReader() {
-	fmt.Printf("[Connection Reader Goroutine] Connection %d reader gouroutine is running. Romote addr = %s\n",
+	log.Printf("[Connection Reader Goroutine] Connection %d reader gouroutine is running. Romote addr = %s\n",
 		c.ConnId, c.GetClientTcpStatus().String())
 	defer func() {
-		fmt.Printf("[Connection Reader Goroutine] %s Connection %d was closed, reader goroutine closed\n",
+		log.Printf("[Connection Reader Goroutine] %s Connection %d was closed, reader goroutine closed\n",
 			c.GetClientTcpStatus().String(), c.ConnId)
 		c.Stop()
 	}()
@@ -85,8 +82,10 @@ func (c *Connection) startReader() {
 
 // startWriter 向当前连接写数据的模块
 func (c *Connection) startWriter() {
-	defer fmt.Printf("[Connection Writer Goroutine] %s Connection %d was closed, writer goroutine closed\n",
+	defer log.Printf("[Connection Writer Goroutine] %s Connection %d was closed, writer goroutine closed\n",
 		c.GetClientTcpStatus().String(), c.GetConnId())
+	log.Printf("[Connection Writer Goroutine] Connection %d writer gouroutine is running. Romote addr = %s\n",
+		c.ConnId, c.GetClientTcpStatus().String())
 	for {
 		select {
 		case data := <-c.MessageChan:
@@ -103,7 +102,7 @@ func (c *Connection) startWriter() {
 
 // Start 启动连接，业务逻辑是启动一个读数据业务和一个写数据的业务
 func (c *Connection) Start() {
-	fmt.Printf("[Connection START] Connection %d starting\n", c.ConnId)
+	log.Printf("[Connection START] Connection %d starting\n", c.ConnId)
 	c.TcpServer.CallOnConnectionStart(c)
 	go c.startReader()
 	go c.startWriter()
@@ -119,9 +118,9 @@ func (c *Connection) Stop() {
 	c.IsClosed = true
 	err := c.Conn.Close()
 	if err != nil {
-		fmt.Printf("[Connection STOP ERROR] Connection %d stopped error:%s\n", c.ConnId, err)
+		log.Printf("[Connection STOP ERROR] Connection %d stopped error:%s\n", c.ConnId, err)
 	}
-	fmt.Printf("[Connection STOP] Connection %d stopped success\n", c.ConnId)
+	log.Printf("[Connection STOP] Connection %d stopped success\n", c.ConnId)
 	close(c.MessageChan)
 	close(c.ExitChan)
 }
@@ -175,14 +174,17 @@ func (c *Connection) HasClosed() bool {
 // NewConnection 初始化连接模块的方法
 func NewConnection(server iface.IServer, conn *net.TCPConn, id uint32, msgHandler iface.IMessageHandler) *Connection {
 	c := &Connection{
-		TcpServer:   server,
-		Conn:        conn,
-		ConnId:      id,
-		IsClosed:    false,
-		MsgHandler:  msgHandler,
-		MessageChan: make(chan []byte),
-		ExitChan:    make(chan bool, 1),
-		PropertyMap: make(map[string]interface{}),
+		TcpServer:         server,
+		Conn:              conn,
+		ConnId:            id,
+		IsClosed:          false,
+		MsgHandler:        msgHandler,
+		MessageChan:       make(chan []byte),
+		ExitChan:          make(chan bool, 1),
+		PropertyMap:       make(map[string]interface{}),
+		queryBuffer:       make([]byte, utils.GlobalObj.MaxPackingSize),
+		args:              make([]string, 0),
+		isQueryProcessing: true,
 	}
 	c.TcpServer.GetConnectionManager().Add(c)
 	return c

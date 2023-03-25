@@ -365,6 +365,7 @@ func OpenRedoLog(path string, lock *sync.Mutex) Log {
 		lock: lock,
 	}
 	//redoLog.init()
+	log.Printf("[Data Manager] Open redo log\n")
 	return redoLog
 }
 

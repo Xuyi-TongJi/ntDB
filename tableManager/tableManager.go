@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"myDB/indexManager"
 	"myDB/transactions"
 	"myDB/versionManager"
@@ -542,6 +543,7 @@ func (tm *TMImpl) CreateTable(xid int64, tableName string, fields []*FieldCreate
 
 func (tm *TMImpl) init() {
 	tm.loadTables()
+	log.Printf("[Table Manager] Initialize table manager")
 }
 
 // loadTables
@@ -567,6 +569,7 @@ func (tm *TMImpl) loadTables() {
 		tm.tableUid[uid] = table.GetName()
 		uid = table.GetNextUid()
 	}
+	log.Printf("[Table Manager] Load tables")
 }
 
 // SearchAll

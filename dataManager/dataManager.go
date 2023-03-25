@@ -3,6 +3,7 @@ package dataManager
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	. "myDB/transactions"
 	"sync"
 )
@@ -204,6 +205,7 @@ func (dm *DmImpl) init() {
 	// 初始化版本号
 	dm.metaPage.InitVersion()
 	dm.pageCache.DoFlush(dm.metaPage)
+	log.Printf("[Data Manager] Initialze page cache\n")
 	dm.pageCtl.Init(dm.pageCache)
 }
 
@@ -243,5 +245,6 @@ func OpenDataManager(path string, memory int64, tm TransactionManager) DataManag
 		transactionManager: tm,
 	}
 	dm.init()
+	log.Printf("[Data Manager] Initialize data manager\n")
 	return dm
 }

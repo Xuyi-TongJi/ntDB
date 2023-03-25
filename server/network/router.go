@@ -48,6 +48,7 @@ func (dbRouter *DbRouter) DoHandle(request iface.IRequest) {
 		err      error
 		response []*tableManager.ResponseObject
 	)
+	log.Printf("[Database] Prepare to handle the requeset of connection %d", request.GetConnection().GetConnId())
 	if len(args) == 0 {
 		err = &ErrorIllegalOperation{}
 	} else {
@@ -66,7 +67,7 @@ func (dbRouter *DbRouter) DoHandle(request iface.IRequest) {
 			xid := request.GetConnection().GetConnectionProperty(TRANS).(int64)
 			_, response, err = dbRouter.db.Execute(xid, args)
 		}
-		log.Printf("Connection %d finish a command %s, xid = %d\n",
+		log.Printf("[Database] Connection %d finish a command %s, xid = %d\n",
 			request.GetConnection().GetConnId(), request.GetArgs()[0], request.GetConnection().GetConnectionProperty(TRANS))
 	}
 	if err != nil {

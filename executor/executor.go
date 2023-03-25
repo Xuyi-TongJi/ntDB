@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"log"
 	"myDB/storageEngine"
 	"myDB/tableManager"
 	"myDB/versionManager"
@@ -8,7 +9,6 @@ import (
 
 type Executor interface {
 	Execute(xid int64, args []string) (int64, []*tableManager.ResponseObject, error)
-	PackageResponse([]*tableManager.ResponseObject)
 }
 
 // CommandType 用于路由
@@ -121,16 +121,13 @@ func (db *NtDB) Execute(xid int64, args []string) (int64, []*tableManager.Respon
 	return xid, nil, nil
 }
 
-func (db *NtDB) PackageResponse(responses []*tableManager.ResponseObject) {
-	//TODO implement me
-	panic("implement me")
-}
-
 func NewExecutor(path string, memory int64, level versionManager.IsolationLevel) Executor {
-	return &NtDB{
+	db := &NtDB{
 		parser:        NewTrieParser(),
 		storageEngine: storageEngine.NewStorageEngine(path, memory, level),
 	}
+	log.Printf("[Executor] Start executor\n")
+	return db
 }
 
 type ErrorIllegalOperation struct{}

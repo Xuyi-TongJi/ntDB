@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 )
@@ -72,6 +73,7 @@ func OpenUndoLog(path string, lock *sync.Mutex) Log {
 		lock:   lock,
 		offset: stat.Size(),
 	}
+	log.Printf("[Version Manager] Open undo log\n")
 	return undo
 }
 

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"log"
 	"myDB/tableManager"
 	"strings"
 )
@@ -115,6 +116,7 @@ func NewTrieParser() Parser {
 	parseCommands["INSERT"] = it
 	parseCommands["DELETE"] = dt
 	parseCommands["CREATE"] = ct
+	log.Printf("[Parser] Initialize parser\n")
 	return &TrieParser{
 		parseCommands: parseCommands,
 		commands:      commands,

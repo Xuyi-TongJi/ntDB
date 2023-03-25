@@ -1,6 +1,9 @@
 package versionManager
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 // LockTable 记录当前VersionManager的锁状态
 // 用于死锁检测
@@ -119,6 +122,7 @@ func (lt *LockTableImpl) alreadyOwnLock(xid, tbUid int64) bool {
 }
 
 func NewLockTable() LockTable {
+	log.Printf("[Version Manager] Initialzing lock table\n")
 	return &LockTableImpl{
 		locks:      map[int64][]int64{},
 		lockStatus: map[int64]int64{},

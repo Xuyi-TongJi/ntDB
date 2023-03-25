@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"log"
 	"os"
 	"sync"
 )
@@ -57,6 +58,7 @@ func NewTransactionManagerImpl(path string) TransactionManager {
 		panic("Invalid XID File\n")
 	} else {
 		t.xidCounter = xid
+		log.Printf("[Transaction Manager] Start transaction manager\n")
 		return t
 	}
 }

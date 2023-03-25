@@ -2,6 +2,7 @@ package network
 
 import (
 	"fmt"
+	"log"
 	"myDB/server/iface"
 	"myDB/server/utils"
 	"net"
@@ -25,15 +26,15 @@ type Server struct {
 }
 
 func logConfig() {
-	fmt.Println("[Server Config] Server config success")
-	fmt.Println("Name: ", utils.GlobalObj.Name)
-	fmt.Println("Version: ", utils.GlobalObj.Version)
-	fmt.Println("Host: ", utils.GlobalObj.Host)
-	fmt.Println("Port: ", utils.GlobalObj.TcpPort)
-	fmt.Println("MaxConn: ", utils.GlobalObj.MaxConn)
-	fmt.Println("MaxPackagingSize: ", utils.GlobalObj.MaxPackingSize)
-	fmt.Println("WorkerPoolSize: ", utils.GlobalObj.WorkerPoolSize)
-	fmt.Printf("[Server START] Server Listener at IP: %s, Port: %d, is starting\n",
+	log.Println("[Server Config] Server config success")
+	log.Println("Name: ", utils.GlobalObj.Name)
+	log.Println("Version: ", utils.GlobalObj.Version)
+	log.Println("Host: ", utils.GlobalObj.Host)
+	log.Println("Port: ", utils.GlobalObj.TcpPort)
+	log.Println("MaxConn: ", utils.GlobalObj.MaxConn)
+	log.Println("MaxPackagingSize: ", utils.GlobalObj.MaxPackingSize)
+	log.Println("WorkerPoolSize: ", utils.GlobalObj.WorkerPoolSize)
+	log.Printf("[Server START] Server Listener at IP: %s, Port: %d, is starting\n",
 		utils.GlobalObj.Host, utils.GlobalObj.TcpPort)
 }
 
@@ -47,26 +48,26 @@ func (s *Server) Start() {
 		// bind
 		addr, err := net.ResolveTCPAddr(s.IPVersion, fmt.Sprintf("%s:%d", s.Address, s.Port))
 		if err != nil {
-			fmt.Println("[Server ERROR] Resolve tcp address error:", err)
+			log.Println("[Server ERROR] Resolve tcp address error:", err)
 			return
 		}
 		// listen
 		listener, err := net.ListenTCP(s.IPVersion, addr)
 		if err != nil {
-			fmt.Println("[Server ERROR] Listening: ", s.IPVersion, "err: ", err)
+			log.Println("[Server ERROR] Listening: ", s.IPVersion, "err: ", err)
 		}
-		fmt.Printf("[Server START] Start Server %s success at IP: %s, Port: %d, listening\n", s.Name, s.Address, s.Port)
+		log.Printf("[Server START] Start Server %s success at IP: %s, Port: %d, listening\n", s.Name, s.Address, s.Port)
 		for {
 			// accept
 			conn, err := listener.AcceptTCP()
 			if err != nil {
-				fmt.Printf("[Server Listener ERROR] Accept error:%s\n", err)
+				log.Printf("[Server Listener ERROR] Accept error:%s\n", err)
 				continue
 			}
 			// 判断连接是否超过最大连接数量, 超过则拒绝连接
 			if total := s.ConnManager.Total(); total >= utils.GlobalObj.MaxConn {
 				// TODO 给客户端响应一个超出最大连接错误报告
-				fmt.Printf("[Server Connection REFUSED] Connection Refused, there are %d current connection alive\n", total)
+				log.Printf("[Server Connection REFUSED] Connection Refused, there are %d current connection alive\n", total)
 				_ = conn.Close()
 				continue
 			}
@@ -79,7 +80,7 @@ func (s *Server) Start() {
 
 func (s *Server) Stop() {
 	// TODO 将服务器的资源，状态或一些已经开辟的链接信息，进行停止或回收
-	fmt.Printf("[Server Stop] Server is ready to stop\n")
+	log.Printf("[Server Stop] Server is ready to stop\n")
 	// 清除（断开）所有connection
 	s.ConnManager.ClearAll()
 }

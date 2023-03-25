@@ -1,14 +1,14 @@
 package cli_core
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
 )
 
 const (
-	MaxMessageSize int    = 1024 << 16
+	MaxMessageSize int    = 1 << 12
 	CRLF           string = "\r\n"
 	SEPARATION     string = " "
 )
@@ -84,10 +84,10 @@ func (pack *Pack) doFmtOutput() {
 					builder.WriteString(SEPARATION)
 				}
 			}
-			fmt.Printf("%s\n", builder.String())
+			log.Printf("%s\n", builder.String())
 			// reset
 		} else {
-			fmt.Printf("%s\n", pack.output[0])
+			log.Printf("%s\n", pack.output[0])
 		}
 		pack.reset()
 	}
