@@ -101,7 +101,7 @@ func (tm *TMImpl) Show(xid int64) ([]*ResponseObject, error) {
 	rowId := 1
 	tm.lock.RLock()
 	defer tm.lock.RUnlock()
-	for uid, _ := range tm.tableUid {
+	for uid := range tm.tableUid {
 		if record := tm.vm.Read(xid, uid); record != nil {
 			tabName := tm.tableUid[uid]
 			res = append(res, &ResponseObject{tabName, rowId, 0})
@@ -421,6 +421,8 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 					prevUid, err := tm.vm.Update(xid, prevRow.GetUid(), tb.GetUid(), raw)
 					if prevUid != row.GetPrevUid() {
 						panic("Fatal Error occurs when updating record raw")
+					} else if err != nil {
+						panic(fmt.Sprintf("Error occurs whne updating record raw, err = %s", err))
 					}
 				}
 				if row.GetNextUid() != 0 {
@@ -439,6 +441,8 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 					nextUid, err := tm.vm.Update(xid, nextRow.GetUid(), tb.GetUid(), raw)
 					if nextUid != row.GetNextUid() {
 						panic("Fatal Error occurs when updating record raw")
+					} else if err != nil {
+						panic(fmt.Sprintf("Error occurs when updating record raw, err = %s", err))
 					}
 				}
 			}
@@ -451,7 +455,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 func (tm *TMImpl) loadField(tb Table, uid int64) Field {
 	record := tm.vm.Read(transactions.SuperXID, uid)
 	if record == nil {
-		panic(fmt.Sprintf("Error occurs when loading metadata of field"))
+		panic("Error occurs when loading metadata of field")
 	}
 	// RECORD
 	// [ROLLBACK]8[XID]8[Data length]8[DATA]
@@ -464,7 +468,7 @@ func (tm *TMImpl) CreateField(xid int64, fieldName string, fieldType FieldType, 
 	var indexUid int64 = 0
 	if indexed {
 		// TODO index
-		indexUid = tm.im.CreateIndex(xid, DefaultFieldFactory.GetCompareFunction(fieldType))
+		// indexUid = tm.im.CreateIndex(xid, DefaultFieldFactory.GetCompareFunction(fieldType))
 	}
 	raw := WrapFieldRaw(fieldName, fieldType, indexUid) // format RECORD DATA
 	// insert metadata to dm
@@ -478,7 +482,7 @@ func (tm *TMImpl) CreateField(xid int64, fieldName string, fieldType FieldType, 
 func (tm *TMImpl) loadTable(uid int64) Table {
 	record := tm.vm.Read(transactions.SuperXID, uid)
 	if record == nil {
-		panic(fmt.Sprintf("Error occurs when loading metadata of table"))
+		panic("Error occurs when loading metadata of table")
 	}
 	data := record.GetData()
 	return DefaultTableFactory.NewTable(uid, data, tm)
@@ -521,7 +525,7 @@ func (tm *TMImpl) CreateTable(xid int64, tableName string, fields []*FieldCreate
 			panic("Error occurs when creating temporary boot file")
 		} else {
 			buffer := bytes.NewBuffer([]byte{})
-			_ = binary.Write(buffer, binary.LittleEndian, uid)
+			_ = binary.Write(buffer, binary.BigEndian, uid)
 			if _, err := newFile.Write(buffer.Bytes()); err != nil {
 				panic("Error occurs when writing temporary boot file")
 			} else {
@@ -558,7 +562,7 @@ func (tm *TMImpl) loadTables() {
 	if _, err := tm.bootFile.ReadAt(buf, 0); err != nil {
 		panic("Error occurs when ")
 	}
-	startUid := int64(binary.LittleEndian.Uint64(buf))
+	startUid := int64(binary.BigEndian.Uint64(buf))
 	tm.topTableUid = startUid
 	uid := startUid
 	for uid != 0 {

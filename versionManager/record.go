@@ -148,9 +148,9 @@ type RecordImplFactory struct{}
 func (factory *RecordImplFactory) NewRecord(raw []byte, di dataManager.DataItem, vm VersionManager, uid int64, undo Log) Record {
 	valid := raw[0] == RCValid
 	offset := SzValid
-	rollback := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRcRollBack]))
+	rollback := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcRollBack]))
 	offset += SzRcRollBack
-	xid := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRcXid]))
+	xid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcXid]))
 	offset += SzRcXid
 	data := raw[offset:]
 	return &RecordImpl{
@@ -165,9 +165,9 @@ func (factory *RecordImplFactory) NewRecord(raw []byte, di dataManager.DataItem,
 func (factory *RecordImplFactory) NewSnapShot(raw []byte, undo Log) Record {
 	valid := raw[0] == RCValid
 	offset := SzValid
-	rollback := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRcRollBack]))
+	rollback := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcRollBack]))
 	offset += SzRcRollBack
-	xid := int64(binary.LittleEndian.Uint64(raw[offset : offset+SzRcXid]))
+	xid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcXid]))
 	offset += SzRcXid
 	data := raw[offset:]
 	return &SnapShot{
@@ -185,10 +185,10 @@ var DefaultRecordFactory RecordFactory
 // Data Format: [ROLLBACK]8[XID]8[SIZE]8[DATA]
 func WrapRecordRaw(valid bool, data []byte, xid int64, rollback int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.LittleEndian, valid)
-	_ = binary.Write(buffer, binary.LittleEndian, rollback)
-	_ = binary.Write(buffer, binary.LittleEndian, xid)
-	_ = binary.Write(buffer, binary.LittleEndian, int64(len(data)))
-	_ = binary.Write(buffer, binary.LittleEndian, data)
+	_ = binary.Write(buffer, binary.BigEndian, valid)
+	_ = binary.Write(buffer, binary.BigEndian, rollback)
+	_ = binary.Write(buffer, binary.BigEndian, xid)
+	_ = binary.Write(buffer, binary.BigEndian, int64(len(data)))
+	_ = binary.Write(buffer, binary.BigEndian, data)
 	return buffer.Bytes()
 }

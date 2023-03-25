@@ -40,7 +40,7 @@ func init() {
 	GlobalObj = &GlobalConfig{
 		Name:             "default_server",
 		Version:          "1.0",
-		TcpPort:          3306,
+		TcpPort:          33333,
 		Host:             "0.0.0.0",
 		MaxConn:          10,
 		MaxPackingSize:   4096,

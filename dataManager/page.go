@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"reflect"
 	"sync"
 )
@@ -153,6 +154,7 @@ func (p *PageImpl) Append(toAdd []byte) error {
 	copy(p.GetData()[used:used+length], toAdd)
 	p.SetUsed(int32(used + length))
 	p.SetDirty(true)
+	fmt.Printf("sdfsldjfskdjflsjdfl")
 	return nil
 }
 
@@ -177,14 +179,14 @@ func (p *PageImpl) GetUsed() int64 {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 	buf := p.GetData()[:SzPgUsed]
-	return int64(binary.LittleEndian.Uint32(buf))
+	return int64(binary.BigEndian.Uint32(buf))
 }
 
 func (p *PageImpl) SetUsed(used int32) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	buf := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buf, binary.LittleEndian, used)
+	_ = binary.Write(buf, binary.BigEndian, used)
 	copy(p.GetData()[:SzPgUsed], buf.Bytes())
 }
 
@@ -196,7 +198,7 @@ func (p *PageImpl) GetFree() int64 {
 
 func (p *PageImpl) GetPageType() PageType {
 	buf := p.GetData()[SzPgUsed : SzPgUsed+SzPageType]
-	return PageType(binary.LittleEndian.Uint32(buf))
+	return PageType(binary.BigEndian.Uint32(buf))
 }
 
 func (p *PageImpl) IsMetaPage() bool {

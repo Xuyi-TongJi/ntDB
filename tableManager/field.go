@@ -126,16 +126,16 @@ type FieldImplFactory struct {
 // 工厂方法
 // 当Field不是一个有效的Field字段时，panic
 func (f *FieldImplFactory) NewField(tb Table, uid int64, raw []byte, im indexManager.IndexManager) Field {
-	mask := int32(binary.LittleEndian.Uint32(raw[:SzMask]))
+	mask := int32(binary.BigEndian.Uint32(raw[:SzMask]))
 	if mask != FieldMask {
 		panic("Error occurs when creating a field struct, it is not a valid field raw")
 	}
 	// [FieldName(string_format)][TypeName]8[IndexUid]8
-	fieldNameLength := int64(binary.LittleEndian.Uint64(raw[:SzVariableLength]))
+	fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzVariableLength]))
 	fieldName := string(raw[SzVariableLength : SzVariableLength+fieldNameLength])
-	fieldType := FieldType(binary.LittleEndian.
+	fieldType := FieldType(binary.BigEndian.
 		Uint64(raw[SzVariableLength+fieldNameLength : SzVariableLength+fieldNameLength+SzFieldType]))
-	indexUid := int64(binary.LittleEndian.Uint64(raw[SzVariableLength+fieldNameLength+SzFieldType:]))
+	indexUid := int64(binary.BigEndian.Uint64(raw[SzVariableLength+fieldNameLength+SzFieldType:]))
 	var index indexManager.Index
 	if indexUid != 0 {
 		index = im.LoadIndex(indexUid)
@@ -160,10 +160,10 @@ var DefaultFieldFactory FieldFactory
 
 func WrapFieldRaw(fName string, fType FieldType, indexUid int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.LittleEndian, int64(len(fName)))
-	_ = binary.Write(buffer, binary.LittleEndian, []byte(fName))
-	_ = binary.Write(buffer, binary.LittleEndian, int64(fType))
-	_ = binary.Write(buffer, binary.LittleEndian, indexUid)
+	_ = binary.Write(buffer, binary.BigEndian, int64(len(fName)))
+	_ = binary.Write(buffer, binary.BigEndian, []byte(fName))
+	_ = binary.Write(buffer, binary.BigEndian, int64(fType))
+	_ = binary.Write(buffer, binary.BigEndian, indexUid)
 	return buffer.Bytes()
 }
 
@@ -208,11 +208,11 @@ func getFTypeValue(fType FieldType, raw []byte) (any, error) {
 	switch fType {
 	case INT32:
 		{
-			return int32(binary.LittleEndian.Uint32(raw)), nil
+			return int32(binary.BigEndian.Uint32(raw)), nil
 		}
 	case INT64:
 		{
-			return int64(binary.LittleEndian.Uint64(raw)), nil
+			return int64(binary.BigEndian.Uint64(raw)), nil
 		}
 	case STRING:
 		{
@@ -237,7 +237,7 @@ func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
 			if v, available := value.(int32); !available {
 				return nil, &ErrorValueNotMatch{}
 			} else {
-				_ = binary.Write(buffer, binary.LittleEndian, v)
+				_ = binary.Write(buffer, binary.BigEndian, v)
 			}
 		}
 	case INT64:
@@ -245,7 +245,7 @@ func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
 			if v, available := value.(int64); !available {
 				return nil, &ErrorValueNotMatch{}
 			} else {
-				_ = binary.Write(buffer, binary.LittleEndian, v)
+				_ = binary.Write(buffer, binary.BigEndian, v)
 			}
 		}
 	case STRING:
@@ -253,8 +253,8 @@ func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
 			if s, available := value.(string); !available {
 				return nil, &ErrorValueNotMatch{}
 			} else {
-				_ = binary.Write(buffer, binary.LittleEndian, int64(len(s)))
-				_ = binary.Write(buffer, binary.LittleEndian, []byte(s))
+				_ = binary.Write(buffer, binary.BigEndian, int64(len(s)))
+				_ = binary.Write(buffer, binary.BigEndian, []byte(s))
 			}
 		}
 	}

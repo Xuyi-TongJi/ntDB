@@ -36,7 +36,7 @@ func (undo *UndoLog) Read(offset int64) []byte {
 	if _, err := undo.file.ReadAt(buffer, offset); err != nil {
 		panic(fmt.Sprintf("Error occurs when reading data, err = %s", err))
 	}
-	length := int64(binary.LittleEndian.Uint64(buffer))
+	length := int64(binary.BigEndian.Uint64(buffer))
 	raw := make([]byte, length)
 	if _, err := undo.file.ReadAt(raw, offset+SzUndoData); err != nil {
 		panic(fmt.Sprintf("Error occurs when reading data, err = %s", err))
@@ -53,7 +53,7 @@ func (undo *UndoLog) Log(data []byte) int64 {
 	ret := undo.offset
 	raw := wrapUndoLog(data)
 	if n, err := undo.file.Write(raw); err != nil {
-		panic(fmt.Sprintf("Error occurs when logging undo log, err = %s"))
+		panic(fmt.Sprintf("Error occurs when logging undo log, err = %s", err))
 	} else {
 		undo.offset += int64(n)
 	}
@@ -80,7 +80,7 @@ func OpenUndoLog(path string, lock *sync.Mutex) Log {
 func wrapUndoLog(data []byte) []byte {
 	length := len(data)
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.LittleEndian, int64(length))
+	_ = binary.Write(buffer, binary.BigEndian, int64(length))
 	return append(buffer.Bytes(), data...)
 }
 

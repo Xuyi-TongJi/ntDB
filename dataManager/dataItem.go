@@ -72,7 +72,7 @@ func (di *DataItemImpl) GetDataLength() int64 {
 	//di.lock.RLock()
 	//defer di.lock.RUnlock()
 	length := di.raw[SzDIValid : SzDIValid+SzDIDataSize]
-	return int64(binary.LittleEndian.Uint64(length))
+	return int64(binary.BigEndian.Uint64(length))
 }
 
 // GetRaw
@@ -136,13 +136,13 @@ func (di *DataItemImpl) Update(newRaw []byte) {
 func WrapDataItemRaw(raw []byte) []byte {
 	size := int64(len(raw))
 	buffer := bytes.NewBuffer([]byte{})
-	_ = binary.Write(buffer, binary.LittleEndian, DIValid)
-	_ = binary.Write(buffer, binary.LittleEndian, size)
-	_ = binary.Write(buffer, binary.LittleEndian, raw)
+	_ = binary.Write(buffer, binary.BigEndian, DIValid)
+	_ = binary.Write(buffer, binary.BigEndian, size)
+	_ = binary.Write(buffer, binary.BigEndian, raw)
 	// 8字节对齐
 	padding := len(buffer.Bytes()) % 8
 	if padding != 0 {
-		_ = binary.Write(buffer, binary.LittleEndian, make([]byte, 8-padding))
+		_ = binary.Write(buffer, binary.BigEndian, make([]byte, 8-padding))
 	}
 	return buffer.Bytes()
 }

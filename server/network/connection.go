@@ -60,6 +60,7 @@ func (c *Connection) startReader() {
 			return
 		}
 		if err := c.processRequest(); err != nil {
+			log.Printf("PROCESS REQUEST ERROR, err = %s\n", err)
 			c.Stop()
 		}
 		if c.canDoNextCommandHandle {
@@ -115,7 +116,6 @@ func (c *Connection) Stop() {
 	c.TcpServer.CallOnConnectionStop(c)
 	c.ExitChan <- true
 	c.TcpServer.GetConnectionManager().Remove(c)
-	c.IsClosed = true
 	err := c.Conn.Close()
 	if err != nil {
 		log.Printf("[Connection STOP ERROR] Connection %d stopped error:%s\n", c.ConnId, err)
@@ -123,6 +123,7 @@ func (c *Connection) Stop() {
 	log.Printf("[Connection STOP] Connection %d stopped success\n", c.ConnId)
 	close(c.MessageChan)
 	close(c.ExitChan)
+	c.IsClosed = true
 }
 
 func (c *Connection) GetTcpConnection() *net.TCPConn {
@@ -140,7 +141,9 @@ func (c *Connection) GetClientTcpStatus() net.Addr {
 // SendMessage 将数据封包为二进制数据并发送给写协程
 func (c *Connection) SendMessage(data []byte) {
 	// 将data发送给写协程
-	c.MessageChan <- data
+	if !c.IsClosed {
+		c.MessageChan <- data
+	}
 }
 
 func (c *Connection) SetConnectionProperty(key string, value interface{}) {
@@ -162,13 +165,15 @@ func (c *Connection) GetConnectionProperty(key string) interface{} {
 func (c *Connection) RemoveConnectionProperty(key string) {
 	c.PropertyLock.Lock()
 	defer c.PropertyLock.Unlock()
-	if _, ok := c.PropertyMap[key]; ok {
-		delete(c.PropertyMap, key)
-	}
+	delete(c.PropertyMap, key)
 }
 
 func (c *Connection) HasClosed() bool {
 	return c.IsClosed
+}
+
+func (c *Connection) GetMsgHandler() iface.IMessageHandler {
+	return c.MsgHandler
 }
 
 // NewConnection 初始化连接模块的方法
@@ -221,17 +226,17 @@ func (c *Connection) handleBulkRequest() error {
 	if c.bulkNum == 0 {
 		crlfIndex := c.findCrlfFromQueryBuffer()
 		if crlfIndex == -1 {
-			return errors.New(fmt.Sprintf("Query Length overflows\n"))
+			return fmt.Errorf("query length overflows")
 		}
 		bNum, err := c.getNumberFromQueryBuffer(1, crlfIndex)
 		if err != nil {
-			return errors.New("illegal client protocol format, illegal bulk number")
+			return fmt.Errorf("illegal client protocol format, illegal bulk number")
 		}
 		c.isQueryProcessing = true
 		c.canDoNextCommandHandle = false
 		c.bulkNum = bNum
 		// move sliding window
-		c.queryBuffer = append(c.queryBuffer[crlfIndex+2:])
+		c.queryBuffer = c.queryBuffer[crlfIndex+2:]
 		c.queryLength -= crlfIndex + 2
 	}
 	for c.bulkNum > 0 {
@@ -253,7 +258,7 @@ func (c *Connection) handleBulkRequest() error {
 			}
 			c.bulkLength = bLength
 			// move sliding window
-			c.queryBuffer = append(c.queryBuffer[crlfIndex+2:])
+			c.queryBuffer = c.queryBuffer[crlfIndex+2:]
 			c.queryLength -= crlfIndex + 2
 		}
 		// find next string element (based on bulkLength)
@@ -263,7 +268,7 @@ func (c *Connection) handleBulkRequest() error {
 		// build client arg
 		newArg := string(c.queryBuffer[:c.bulkLength])
 		c.args = append(c.args, newArg)
-		c.queryBuffer = append(c.queryBuffer[c.bulkLength+2:])
+		c.queryBuffer = c.queryBuffer[c.bulkLength+2:]
 		c.queryLength -= c.bulkLength + 2
 		c.bulkLength = 0
 		c.bulkNum -= 1

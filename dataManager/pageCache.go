@@ -94,9 +94,6 @@ func (p *PageCacheImpl) SetDsSize(maxPageNumbers int64) error {
 	if p.pageNumbers.Load() >= maxPageNumbers {
 		return nil
 	}
-	if err := p.ds.Truncate(maxPageNumbers * PageSize); err != nil {
-		return err
-	}
 	p.pageNumbers.Store(maxPageNumbers)
 	return nil
 }
@@ -139,10 +136,10 @@ func (p pageFactoryImpl) newPage(ds DataSource, pageId int64, pc PageCache, page
 	case *FileSystemDataSource:
 		data := make([]byte, PageSize)
 		buf := bytes.NewBuffer([]byte{})
-		_ = binary.Write(buf, binary.LittleEndian, int32(InitOffset))
+		_ = binary.Write(buf, binary.BigEndian, int32(InitOffset))
 		copy(data[0:SzPgUsed], buf.Bytes())
 		buf = bytes.NewBuffer([]byte{})
-		_ = binary.Write(buf, binary.LittleEndian, int32(pageType))
+		_ = binary.Write(buf, binary.BigEndian, int32(pageType))
 		copy(data[SzPgUsed:SzPgUsed+SzPageType], buf.Bytes())
 		return &PageImpl{
 			pageId: pageId, dirty: false, pc: pc, data: data,

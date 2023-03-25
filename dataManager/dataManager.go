@@ -106,8 +106,7 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 		panic("Error occurs when inserting data, err = data length overflow\n")
 	}
 	// find a free page by page Ctl
-	var pi *PageInfo
-	pi = dm.pageCtl.Select(length)
+	pi := dm.pageCtl.Select(length)
 	var pageId int64
 	// if necessarily, create a new page
 	if pi == nil {
@@ -115,12 +114,14 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	} else {
 		pageId = pi.PageId
 	}
+	log.Printf("[Data Manager] Try to insert at page %d\n", pageId)
 	pg, err := dm.pageCache.GetPage(pageId)
 	if err != nil {
 		panic(fmt.Sprintf("Error occurs when getting page, err = %s", err))
 	}
 	offset := pg.GetUsed()
 	// LOG FIRST
+	log.Printf("[Data Manager] locate at %d %d\n", pg.GetId(), offset)
 	dm.redo.InsertLog(xid, getUid(pg.GetId(), offset), raw)
 	// update page data
 	if err := pg.Append(raw); err != nil {
@@ -215,7 +216,7 @@ func (dm *DmImpl) getDataItem(page Page, offset int64) DataItem {
 	// start from the offset of data
 	data := page.GetData()
 	// RAW [valid]1[size]8[data]
-	dataSize := int64(binary.LittleEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
+	dataSize := int64(binary.BigEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
 	raw := data[offset : offset+SzDIValid+SzDIDataSize+dataSize]
 	oldRaw := make([]byte, len(raw))
 	uid := getUid(page.GetId(), offset)
@@ -227,6 +228,7 @@ func uidTrans(uid int64) (pageId, offset int64) {
 	offset = uid & ((1 << 32) - 1)
 	uid >>= 32
 	pageId = uid & ((1 << 32) - 1)
+	log.Printf("[Data Manager] locate at %d %d\n", pageId, offset)
 	return
 }
 

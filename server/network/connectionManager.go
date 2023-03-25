@@ -2,13 +2,11 @@ package network
 
 import (
 	"fmt"
-	cmap "github.com/orcaman/concurrent-map/v2"
+	"log"
 	"myDB/server/iface"
 	"strconv"
-)
 
-import (
-	"errors"
+	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
 type cid struct {
@@ -36,7 +34,7 @@ func (cm *ConnectionManager) Add(c iface.IConnection) {
 
 func (cm *ConnectionManager) Remove(c iface.IConnection) {
 	cm.ConnectionMap.Remove(cid{id: c.GetConnId()})
-	fmt.Printf("[ConnectionManager Remove Connection] Remove Connection %d success\n", c.GetConnId())
+	log.Printf("[ConnectionManager Remove Connection] Remove Connection %d success\n", c.GetConnId())
 }
 
 func (cm *ConnectionManager) Get(c uint32) (iface.IConnection, error) {
@@ -44,7 +42,7 @@ func (cm *ConnectionManager) Get(c uint32) (iface.IConnection, error) {
 		c, _ := cm.ConnectionMap.Get(cid{id: c})
 		return c, nil
 	}
-	return nil, errors.New(fmt.Sprintf("[ConnectionManager Get Connection ERROR] Invalid Connection id %d\n", c))
+	return nil, fmt.Errorf("[ConnectionManager Get Connection ERROR] Invalid Connection id %d", c)
 }
 
 func (cm *ConnectionManager) Total() int {

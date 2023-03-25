@@ -48,13 +48,13 @@ func (s *Server) Start() {
 		// bind
 		addr, err := net.ResolveTCPAddr(s.IPVersion, fmt.Sprintf("%s:%d", s.Address, s.Port))
 		if err != nil {
-			log.Println("[Server ERROR] Resolve tcp address error:", err)
-			return
+			panic(fmt.Sprintf("[Server ERROR] Resolve tcp address error: %s \n", err))
 		}
 		// listen
 		listener, err := net.ListenTCP(s.IPVersion, addr)
 		if err != nil {
 			log.Println("[Server ERROR] Listening: ", s.IPVersion, "err: ", err)
+			return
 		}
 		log.Printf("[Server START] Start Server %s success at IP: %s, Port: %d, listening\n", s.Name, s.Address, s.Port)
 		for {
@@ -127,7 +127,7 @@ func (s *Server) GetMaxPackingSize() uint32 {
 
 // NewServer 初始化Server模块的方法
 func NewServer(ipVersion string) iface.IServer {
-	return &Server{
+	s := &Server{
 		Name:           utils.GlobalObj.Name,
 		IPVersion:      ipVersion,
 		Address:        utils.GlobalObj.Host,
@@ -138,4 +138,11 @@ func NewServer(ipVersion string) iface.IServer {
 		MsgHandler:     NewMessageHandler(),
 		ConnManager:    NewConnectionManager(),
 	}
+	abortTransactionBeforeDisConnection := func(c iface.IConnection) {
+		// 回滚事物
+		msg := &Message{Id: DbRouterMsgId, args: []string{"ABORT"}}
+		c.GetMsgHandler().SubmitTask(&Request{conn: c, message: msg})
+	}
+	s.SetOnConnectionStop(abortTransactionBeforeDisConnection)
+	return s
 }

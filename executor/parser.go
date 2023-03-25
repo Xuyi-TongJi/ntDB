@@ -83,9 +83,11 @@ func (parser *TrieParser) ParseRequest(args []string) (CommandType, []any, error
 		}
 	default:
 		{
-			for command, value := range parser.commands {
-				if command == query {
-					cmd = value
+			if len(args) == 1 {
+				for command, value := range parser.commands {
+					if command == query {
+						cmd = value
+					}
 				}
 			}
 			return cmd, nil, nil
@@ -226,7 +228,6 @@ func addWhereCondition(currentNode *Node) {
 	currentNode.child["WHERE"] = &Node{
 		3, 3, "WHERE", map[string]*Node{},
 	}
-	currentNode = currentNode.child["WHERE"]
 }
 
 func parseQuery(grammar *Trie, entity []any, args []string) error {
@@ -234,7 +235,11 @@ func parseQuery(grammar *Trie, entity []any, args []string) error {
 	count := len(args)
 	var status *Status
 	eIndex := -1
-	currentArgs := make([]string, 0)
+	var currentArgs []string
+	// for _, arg := range args {
+	// 	fmt.Printf("%s ", arg)
+	// }
+	// fmt.Println()
 	for i := 0; i < count; i++ {
 		// key word
 		upper := strings.ToUpper(args[i])
@@ -254,8 +259,11 @@ func parseQuery(grammar *Trie, entity []any, args []string) error {
 		} else {
 			// 常规参数
 			currentArgs = append(currentArgs, args[i])
+			status.paramNum += 1
 		}
-		// check last status must be nil
+	}
+	// check last status must be nil
+	if len(currentArgs) > 0 {
 		if err := packStatus(status, current, currentArgs); err != nil {
 			return err
 		}

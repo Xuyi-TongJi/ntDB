@@ -67,16 +67,20 @@ func (dbRouter *DbRouter) DoHandle(request iface.IRequest) {
 			xid := request.GetConnection().GetConnectionProperty(TRANS).(int64)
 			_, response, err = dbRouter.db.Execute(xid, args)
 		}
-		log.Printf("[Database] Connection %d finish a command %s, xid = %d\n",
-			request.GetConnection().GetConnId(), request.GetArgs()[0], request.GetConnection().GetConnectionProperty(TRANS))
+		if err == nil {
+			log.Printf("[Database] Connection %d finish a command %s, xid = %d\n",
+				request.GetConnection().GetConnId(), request.GetArgs()[0], request.GetConnection().GetConnectionProperty(TRANS))
+		} else {
+			log.Printf("[Database] Connection %d meets an error %s, xid = %d, commandType = %s\n",
+				request.GetConnection().GetConnId(), err, request.GetConnection().GetConnectionProperty(TRANS), request.GetArgs()[0])
+		}
 	}
 	if err != nil {
 		// handle error
 		dbRouter.handleError(err, request)
 	} else if response != nil && len(response) > 0 {
-		// json
 		last := response[len(response)-1]
-		row, col := last.ColId, last.RowId
+		row, col := last.ColId+1, last.RowId+1
 		resMsg := make([]string, 0)
 		resMsg = append(resMsg, strconv.FormatInt(int64(row), 10))
 		resMsg = append(resMsg, strconv.FormatInt(int64(col), 10))
@@ -100,24 +104,20 @@ func (dbRouter *DbRouter) PostHandle(request iface.IRequest) {
 	}
 }
 
-func (dbRouter *DbRouter) beginTransactionAuto(request iface.IRequest) error {
-	return dbRouter.doBegin(true, request)
-}
-
 func (dbRouter *DbRouter) isQuitCommand(args []string) bool {
-	return len(args) > 0 && strings.ToUpper(args[0]) == "QUIT"
+	return len(args) == 1 && strings.ToUpper(args[0]) == "QUIT"
 }
 
 func (dbRouter *DbRouter) isBeginCommand(args []string) bool {
-	return len(args) > 0 && strings.ToUpper(args[0]) == "BEGIN"
+	return len(args) == 1 && strings.ToUpper(args[0]) == "BEGIN"
 }
 
 func (dbRouter *DbRouter) isAbortCommand(args []string) bool {
-	return len(args) > 0 && strings.ToUpper(args[0]) == "ABORT"
+	return len(args) == 1 && strings.ToUpper(args[0]) == "ABORT"
 }
 
 func (dbRouter *DbRouter) isCommitCommand(args []string) bool {
-	return len(args) > 0 && strings.ToUpper(args[0]) == "COMMIT"
+	return len(args) == 1 && strings.ToUpper(args[0]) == "COMMIT"
 }
 
 func (dbRouter *DbRouter) doBegin(autoCommitted bool, request iface.IRequest) error {
@@ -143,7 +143,7 @@ func (dbRouter *DbRouter) doAbort(request iface.IRequest) error {
 	defer func() {
 		// remove
 		request.GetConnection().SetConnectionProperty(TRANS, int64(-1))
-		request.GetConnection().SetConnectionProperty(TRANS, false)
+		request.GetConnection().SetConnectionProperty(AUTO, false)
 	}()
 	xid := request.GetConnection().GetConnectionProperty(TRANS)
 	if xid == nil || xid.(int64) == -1 {
@@ -234,11 +234,6 @@ func packErrorMessage(msg string) string {
 
 func packString(msg string) string {
 	var str []string = []string{StringHead, msg, CRLF}
-	return strings.Join(str, "")
-}
-
-func packInt(num int) string {
-	var str []string = []string{IntHead, strconv.Itoa(num), CRLF}
 	return strings.Join(str, "")
 }
 

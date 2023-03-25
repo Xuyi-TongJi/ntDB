@@ -37,6 +37,7 @@ func (lt *LockTableImpl) AddLock(xid, tbUid, lastOwner int64) (bool, int64, erro
 	}
 	lt.lock.Lock()
 	defer lt.lock.Unlock()
+	log.Printf("[Version Manager] Transaction %d tries to lock semaphore %d\n", xid, tbUid)
 	// 锁是否有owner
 	// 有owner，加锁失败, 检测是否存在循环等待条件
 	if _, ext := lt.lockStatus[tbUid]; ext {
@@ -58,6 +59,7 @@ func (lt *LockTableImpl) AddLock(xid, tbUid, lastOwner int64) (bool, int64, erro
 		}
 	} else {
 		// 没有owner 加锁成功
+		log.Printf("[Version Manager] Transaction %d locks semaphore %d\n", xid, tbUid)
 		lt.lockStatus[tbUid] = xid
 		lt.locks[xid] = append(lt.locks[xid], tbUid)
 		return true, xid, nil

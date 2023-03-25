@@ -62,7 +62,7 @@ func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
 // Select and remove 操作必须是原子的
 func (pi *PageCtlImpl) Select(need int64) *PageInfo {
 	pi.lock.Lock()
-	defer pi.lock.Lock()
+	defer pi.lock.Unlock()
 	if need <= 0 {
 		panic("Illegal page cache application operation\n")
 	}
@@ -81,11 +81,11 @@ func (pi *PageCtlImpl) Select(need int64) *PageInfo {
 	} else {
 		intervalNum = need / THRESHOLD
 	}
-	if intervalNum != INTERVALS {
+	if intervalNum != INTERVALS-1 {
 		intervalNum += 1
 	}
 	toFind := &PageInfo{-1, need}
-	for ; intervalNum <= INTERVALS; intervalNum += 1 {
+	for ; intervalNum < INTERVALS; intervalNum += 1 {
 		if result := pi.free[intervalNum].FindGtAndRemove(toFind); result != nil {
 			return result.(*PageInfo)
 		}

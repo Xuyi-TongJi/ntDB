@@ -24,6 +24,7 @@ type IConnection interface {
 	RemoveConnectionProperty(key string)
 	// HasClosed 连接是否关闭
 	HasClosed() bool
+	GetMsgHandler() IMessageHandler
 }
 
 // HandleFunc 定义一个处理连接业务的方法
