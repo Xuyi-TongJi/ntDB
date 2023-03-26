@@ -52,7 +52,9 @@ func (redo *RedoLog) UpdateLog(uid, xid int64, oldRaw, raw []byte) {
 func (redo *RedoLog) InsertLog(uid, xid int64, raw []byte) {
 	pageId, offset := uidTrans(uid)
 	// Insert 本质 INVALID -> VALID
-	oldRaw := SetRawInvalid(raw)
+	oldRaw := make([]byte, len(raw))
+	copy(oldRaw, raw)
+	oldRaw = SetRawInvalid(oldRaw)
 	log.Printf("[REDO LOG line 55] PREPARE TO INSERT A LOG %d %d %d %d\n", xid, pageId, offset, len(oldRaw))
 	insertLog := wrapUpdateLog(xid, pageId, offset, int64(len(oldRaw)), oldRaw, raw)
 	redo.log(insertLog)
@@ -251,7 +253,6 @@ func (redo *RedoLog) CrashRecover(pc PageCache, tm transactions.TransactionManag
 			break
 		}
 		x, pi, offset, oldRawLength, _, _ := parseUpdateLog(nextLog)
-
 		xid := getXid(nextLog)
 		pageId := getPageId(nextLog)
 		xStatus := tm.Status(xid)

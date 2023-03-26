@@ -62,6 +62,7 @@ type ErrorTableNotExist struct{}
 type ErrorInvalidFieldCount struct{}
 type ErrorInvalidFieldName struct{}
 type ErrorUnsupportedOperationType struct{}
+type ErrorTableAlreadyExist struct{}
 
 func (err *ErrorTableNotExist) Error() string {
 	return "Table doesn't exist"
@@ -77,6 +78,10 @@ func (err *ErrorInvalidFieldName) Error() string {
 
 func (err *ErrorUnsupportedOperationType) Error() string {
 	return "The operation type is not supported"
+}
+
+func (err *ErrorTableAlreadyExist) Error() string {
+	return "This table is already created"
 }
 
 func (tm *TMImpl) Begin() int64 {
@@ -112,6 +117,12 @@ func (tm *TMImpl) Show(xid int64) ([]*ResponseObject, error) {
 }
 
 func (tm *TMImpl) Create(xid int64, create *Create) error {
+	// check table exists
+	tm.lock.RLock()
+	if _, ext := tm.tables[create.TbName]; ext {
+		return &ErrorTableAlreadyExist{}
+	}
+	tm.lock.RUnlock()
 	_, err := tm.CreateTable(xid, create.TbName, create.Fields)
 	return err
 }
@@ -159,7 +170,7 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 			newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTableRaw)
 			// **** newUid must equal to the current one
 			// assert
-			if newUid != uid {
+			if newUid != tb.GetUid() {
 				panic("Error occurs when updating table meta data")
 			}
 			if err != nil {
@@ -689,7 +700,7 @@ func (tm *TMImpl) wrapTableResponseTitle(fName []string) []*ResponseObject {
 }
 
 func matchWhereCondition(row Row, table Table, where *Where) bool {
-	if where == nil {
+	if where == nil || where.Compare == nil {
 		return true
 	}
 	comparedField := where.Compare.FieldName

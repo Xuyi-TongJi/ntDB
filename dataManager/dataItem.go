@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 )
 
 // DataItem
@@ -85,6 +84,8 @@ func (di *DataItemImpl) GetUid() int64 {
 	return di.uid
 }
 
+// Release
+// Data Manager层不能Release，确保其被上层模块调用
 func (di *DataItemImpl) Release() {
 	di.dm.Release(di)
 }
@@ -131,12 +132,11 @@ func WrapDataItemRaw(data []byte) []byte {
 	_ = binary.Write(buffer, binary.BigEndian, DIValid)
 	_ = binary.Write(buffer, binary.BigEndian, size)
 	_ = binary.Write(buffer, binary.BigEndian, data)
-	log.Printf("[DATA ITEM LINE 134] WRAP DATAITEM, size = %d\n", size)
-	// 8字节对齐
-	padding := len(buffer.Bytes()) % 8
-	if padding != 0 {
-		_ = binary.Write(buffer, binary.BigEndian, make([]byte, 8-padding))
-	}
+	//// 8字节对齐
+	//padding := len(buffer.Bytes()) % 8
+	//if padding != 0 {
+	//	_ = binary.Write(buffer, binary.BigEndian, make([]byte, 8-padding))
+	//}
 	return buffer.Bytes()
 }
 

@@ -47,6 +47,7 @@ func (dm *DmImpl) ReadSnapShot(uid int64) DataItem {
 func (dm *DmImpl) Read(uid int64) DataItem {
 	di := dm.doRead(uid)
 	if !di.IsValid() {
+		di.Release()
 		return nil
 	}
 	return di
@@ -58,7 +59,6 @@ func (dm *DmImpl) doRead(uid int64) DataItem {
 		panic(fmt.Sprintf("Error occurs when getting pages, err = %s", err))
 	} else {
 		item := dm.getDataItem(page, offset)
-		dm.Release(item)
 		return item
 	}
 }
@@ -89,7 +89,6 @@ func (dm *DmImpl) Update(xid, uid int64, data []byte) int64 {
 		// INSERT
 		ret = dm.Insert(xid, data)
 	}
-	di.Release()
 	return ret
 }
 
@@ -155,7 +154,6 @@ func (dm *DmImpl) Delete(xid, uid int64) {
 		dm.redo.UpdateLog(uid, xid, oldRaw, newRaw)
 		di.SetInvalid()
 	}
-	di.Release()
 }
 
 // Recover

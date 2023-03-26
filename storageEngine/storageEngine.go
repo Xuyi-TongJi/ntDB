@@ -41,10 +41,24 @@ func (se *NtStorageEngine) Show(xid int64) ([]*tableManager.ResponseObject, erro
 	return se.tm.Show(xid)
 }
 
+type ErrorRepetitiveField struct{}
+
+func (err *ErrorRepetitiveField) Error() string {
+	return "Table must not have repetitive field names"
+}
+
 func (se *NtStorageEngine) Create(xid int64, create *tableManager.Create) error {
 	// 添加主键
 	fc := []*tableManager.FieldCreate{{FName: "ID", FType: "int64", Indexed: "indexed"}}
+	// 检查是否有重名字段
 	fc = append(fc, create.Fields...)
+	for i, f1 := range create.Fields {
+		for j, f2 := range create.Fields {
+			if i != j && f1.FName == f2.FName {
+				return &ErrorRepetitiveField{}
+			}
+		}
+	}
 	create.Fields = fc
 	return se.tm.Create(xid, create)
 }

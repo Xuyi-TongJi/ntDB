@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"sync"
 )
@@ -17,7 +18,7 @@ type Connection struct {
 	TcpServer    iface.IServer
 	Conn         *net.TCPConn
 	ConnId       uint32
-	IsClosed     bool
+	IsClosed     atomic.Bool
 	ExitChan     chan bool
 	MessageChan  chan []byte
 	MsgHandler   iface.IMessageHandler
@@ -110,9 +111,10 @@ func (c *Connection) Start() {
 }
 
 func (c *Connection) Stop() {
-	if c.IsClosed {
+	if c.IsClosed.Load() {
 		return
 	}
+	c.IsClosed.Store(true) // close a channel only once
 	c.TcpServer.CallOnConnectionStop(c)
 	c.ExitChan <- true
 	c.TcpServer.GetConnectionManager().Remove(c)
@@ -123,7 +125,6 @@ func (c *Connection) Stop() {
 	log.Printf("[Connection STOP] Connection %d stopped success\n", c.ConnId)
 	close(c.MessageChan)
 	close(c.ExitChan)
-	c.IsClosed = true
 }
 
 func (c *Connection) GetTcpConnection() *net.TCPConn {
@@ -141,7 +142,7 @@ func (c *Connection) GetClientTcpStatus() net.Addr {
 // SendMessage 将数据封包为二进制数据并发送给写协程
 func (c *Connection) SendMessage(data []byte) {
 	// 将data发送给写协程
-	if !c.IsClosed {
+	if !c.IsClosed.Load() {
 		c.MessageChan <- data
 	}
 }
@@ -169,7 +170,7 @@ func (c *Connection) RemoveConnectionProperty(key string) {
 }
 
 func (c *Connection) HasClosed() bool {
-	return c.IsClosed
+	return c.IsClosed.Load()
 }
 
 func (c *Connection) GetMsgHandler() iface.IMessageHandler {
@@ -182,7 +183,7 @@ func NewConnection(server iface.IServer, conn *net.TCPConn, id uint32, msgHandle
 		TcpServer:         server,
 		Conn:              conn,
 		ConnId:            id,
-		IsClosed:          false,
+		IsClosed:          atomic.Bool{},
 		MsgHandler:        msgHandler,
 		MessageChan:       make(chan []byte),
 		ExitChan:          make(chan bool, 1),
@@ -198,7 +199,6 @@ func NewConnection(server iface.IServer, conn *net.TCPConn, id uint32, msgHandle
 // processRequest 处理请求 功能：将请求string转为Client对象中的args
 // 1. 获取请求协议类型[INLINE/BULK]
 // 2. 将请求[]byte解析道client.args
-// TODO 解析发生错误，则断开连接
 // 未完整解析一条指令，则保留queryBuffer和queryLength，到下一次Read(readQueryFromClient)返回后再处理
 // 处理一定是从queryBuffer的第一个字节开始
 func (c *Connection) processRequest() error {

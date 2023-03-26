@@ -228,12 +228,12 @@ const (
 )
 
 func packErrorMessage(msg string) string {
-	var str []string = []string{ErrorHead, msg, CRLF}
+	var str = []string{ErrorHead, msg, CRLF}
 	return strings.Join(str, "")
 }
 
 func packString(msg string) string {
-	var str []string = []string{StringHead, msg, CRLF}
+	var str = []string{StringHead, msg, CRLF}
 	return strings.Join(str, "")
 }
 

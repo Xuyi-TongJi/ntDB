@@ -76,7 +76,7 @@ func (p *RefCountBufferPoolImpl) Release(obj PoolObj) error {
 	key := obj.GetId()
 	count, ext := p.refCount[key]
 	if !ext {
-		panic("Try to release a key which is not in buffer pool\n")
+		return nil
 	}
 	count -= 1
 	if count == 0 {

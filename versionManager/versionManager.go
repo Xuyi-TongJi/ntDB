@@ -68,6 +68,7 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 		return nil
 	}
 	snapShot := DefaultRecordFactory.NewSnapShot(di.GetData(), v.undo)
+	di.Release()
 	// 超级事物读取的
 	if xid == transactions.SuperXID {
 		return snapShot
@@ -96,6 +97,7 @@ func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {
 	if di == nil {
 		return nil, nil
 	}
+	di.Release()
 	return DefaultRecordFactory.NewRecord(di.GetData(), di, v, uid, v.undo), nil
 }
 
