@@ -114,19 +114,21 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	} else {
 		pageId = pi.PageId
 	}
-	log.Printf("[Data Manager] Try to insert at page %d\n", pageId)
 	pg, err := dm.pageCache.GetPage(pageId)
 	if err != nil {
 		panic(fmt.Sprintf("Error occurs when getting page, err = %s", err))
 	}
 	offset := pg.GetUsed()
 	// LOG FIRST
-	log.Printf("[Data Manager] locate at %d %d\n", pg.GetId(), offset)
-	dm.redo.InsertLog(xid, getUid(pg.GetId(), offset), raw)
+	log.Printf("[Data Manager LINE 123] locate at %d %d\n", pg.GetId(), offset)
+	dm.redo.InsertLog(getUid(pg.GetId(), offset), xid, raw)
+	log.Printf("[Data Manager LINE 125] finish log %d %d\n", pg.GetId(), offset)
 	// update page data
+	// TODO
 	if err := pg.Append(raw); err != nil {
 		panic(fmt.Sprintf("Error occurs when updating page, err = %s\n", err))
 	}
+	log.Printf("[Data Manager LINE 131] finish append %d %d\n", pg.GetId(), offset)
 	// update pageCtl
 	dm.pageCtl.AddPageInfo(pg.GetId(), pg.GetFree())
 	// release
@@ -218,9 +220,9 @@ func (dm *DmImpl) getDataItem(page Page, offset int64) DataItem {
 	// RAW [valid]1[size]8[data]
 	dataSize := int64(binary.BigEndian.Uint64(data[offset+SzDIValid : offset+SzDIValid+SzDIDataSize]))
 	raw := data[offset : offset+SzDIValid+SzDIDataSize+dataSize]
-	oldRaw := make([]byte, len(raw))
 	uid := getUid(page.GetId(), offset)
-	return NewDataItem(raw, oldRaw, &sync.RWMutex{}, dm, page, uid)
+	// raw直接引用给DataItem
+	return NewDataItem(raw, dm, page, uid)
 }
 
 // uid 高32位为pageId, 低32位为offset
@@ -228,7 +230,7 @@ func uidTrans(uid int64) (pageId, offset int64) {
 	offset = uid & ((1 << 32) - 1)
 	uid >>= 32
 	pageId = uid & ((1 << 32) - 1)
-	log.Printf("[Data Manager] locate at %d %d\n", pageId, offset)
+	log.Printf("[Data Manager] UID TRANS LOCATE AT %d %d\n", pageId, offset)
 	return
 }
 

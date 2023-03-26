@@ -127,7 +127,7 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	if tran == nil {
 		panic("Error occurs when getting transaction struct, it is not an active transaction")
 	}
-	log.Printf("[Version Manager] Transaction %d INSERT..\n", xid)
+	log.Printf("[VERSION MANAGER LINE 144] Transaction %d INSERT..\n", xid)
 	// metaData, 不需要获得锁，直接插入, 但是在插入结束后，xid会直接获得这个uid的锁
 	if tbUid == MetaDataTbUid {
 		return v.dm.Insert(xid, data), nil
@@ -141,6 +141,7 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	if tbUid == MetaDataTbUid {
 		_ = v.tryToLockTable(xid, uid)
 	}
+	log.Printf("[VERSION MANAGER LINE 144] Transaction %d INSERT FINISHED\n", xid)
 	return uid, nil
 }
 

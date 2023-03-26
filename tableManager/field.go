@@ -130,6 +130,7 @@ func (f *FieldImplFactory) NewField(tb Table, uid int64, raw []byte, im indexMan
 	if mask != FieldMask {
 		panic("Error occurs when creating a field struct, it is not a valid field raw")
 	}
+	raw = raw[SzMask:]
 	// [FieldName(string_format)][TypeName]8[IndexUid]8
 	fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzVariableLength]))
 	fieldName := string(raw[SzVariableLength : SzVariableLength+fieldNameLength])
@@ -160,6 +161,7 @@ var DefaultFieldFactory FieldFactory
 
 func WrapFieldRaw(fName string, fType FieldType, indexUid int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buffer, binary.BigEndian, FieldMask)
 	_ = binary.Write(buffer, binary.BigEndian, int64(len(fName)))
 	_ = binary.Write(buffer, binary.BigEndian, []byte(fName))
 	_ = binary.Write(buffer, binary.BigEndian, int64(fType))

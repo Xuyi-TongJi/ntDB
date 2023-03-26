@@ -42,7 +42,7 @@ func (list *LinkedList) RemoveFirst() any {
 
 func (list *LinkedList) FindGtAndRemove(target any) any {
 	for curr := list.head.next; curr != list.tail; curr = curr.next {
-		if list.compareFunction(curr, target) >= 0 {
+		if list.compareFunction(curr.val, target) >= 0 {
 			removeNode(curr)
 			list.size -= 1
 			return curr.val

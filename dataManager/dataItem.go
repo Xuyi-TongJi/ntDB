@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"sync"
 )
 
 // DataItem
@@ -27,13 +26,15 @@ type DataItem interface {
 
 // DataItemImpl
 // RAW: [valid]1[dataSize]8[data]
+// raw是Page[offset:offset+raw_length]的一段切片，修改raw将直接修改page上的数据
+// 因为上层（VM）确保了事物之间的隔离性即，两个事物不会并发操作同一个DataItem, 因此对dataItem的修改操作不用加锁
+// 且DataManager的PageCtl模块确保了在添加(Append)操作时不会同时操作一个DataItem（uid）
+// **** 将数据返回给上层时，必须深拷贝，禁止上层对Page中的数据进行修改
 type DataItemImpl struct {
 	page Page // BufferPool中的页, 当前raw位于哪个页
 	uid  int64
 	dm   DataManager
-	raw  []byte // raw是Page[offset:offset+raw_length]的一段切片，修改raw将直接修改page上的数据
-	//oldRaw []byte
-	lock *sync.RWMutex // 保留字段，可以移除
+	raw  []byte
 }
 
 const (
@@ -43,15 +44,13 @@ const (
 	SzDIDataSize int64 = 8
 )
 
-func NewDataItem(raw []byte, oldRaw []byte, lock *sync.RWMutex, dm DataManager,
+func NewDataItem(raw []byte, dm DataManager,
 	page Page, uid int64) DataItem {
 	return &DataItemImpl{
 		page: page,
 		uid:  uid,
 		dm:   dm,
 		raw:  raw,
-		//oldRaw: oldRaw, // 暂时移除
-		lock: lock, // 可以移除
 	}
 }
 
@@ -60,8 +59,6 @@ func NewDataItem(raw []byte, oldRaw []byte, lock *sync.RWMutex, dm DataManager,
 // 深拷贝
 // [valid]1[Length]8[DATA]... -> [DATA]
 func (di *DataItemImpl) GetData() []byte {
-	//di.lock.RLock()
-	//defer di.lock.RUnlock()
 	data := di.raw[SzDIValid+SzDIDataSize:]
 	copyData := make([]byte, len(data))
 	copy(copyData, data)
@@ -69,8 +66,6 @@ func (di *DataItemImpl) GetData() []byte {
 }
 
 func (di *DataItemImpl) GetDataLength() int64 {
-	//di.lock.RLock()
-	//defer di.lock.RUnlock()
 	length := di.raw[SzDIValid : SzDIValid+SzDIDataSize]
 	return int64(binary.BigEndian.Uint64(length))
 }
@@ -79,16 +74,10 @@ func (di *DataItemImpl) GetDataLength() int64 {
 // 获得DataItem Raw [Valid]1[Length]8[Data]
 // 深拷贝
 func (di *DataItemImpl) GetRaw() []byte {
-	//di.lock.RLock()
-	//defer di.lock.RUnlock()
 	copyData := make([]byte, len(di.raw))
 	copy(copyData, di.raw)
 	return copyData
 }
-
-//func (di *DataItemImpl) GetOldRaw() []byte {
-//	//return di.oldRaw
-//}
 
 func (di *DataItemImpl) GetUid() int64 {
 	return di.uid
@@ -104,6 +93,7 @@ func (di *DataItemImpl) IsValid() bool {
 
 // SetInvalid
 // 将di设置为无效，相当于删除这个Di
+// 可以无锁，VM可以确保其数据安全
 func (di *DataItemImpl) SetInvalid() {
 	di.page.SetDirty(true)
 	copy(di.raw[:SzDIValid], []byte{DIInvalid})

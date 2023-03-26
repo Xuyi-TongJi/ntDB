@@ -2,7 +2,6 @@ package dataManager
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -78,6 +77,8 @@ func (ch *FileSystemDataSource) FlushBackToDataSource(obj PoolObj) error {
 	if !ok {
 		panic("File System Data Source illegal param\n")
 	}
+	obj.Lock()
+	defer obj.Unlock()
 	_, err := ch.file.WriteAt(fso.GetData(), fso.GetOffset())
 	return err
 }
@@ -93,10 +94,4 @@ func (ch *FileSystemDataSource) Close() error {
 func (ch *FileSystemDataSource) GetDataLength() int64 {
 	stat, _ := ch.file.Stat()
 	return stat.Size()
-}
-
-// Debug only for debugging
-func (ch *FileSystemDataSource) Debug() {
-	stat, _ := ch.file.Stat()
-	fmt.Println(stat.Size())
 }

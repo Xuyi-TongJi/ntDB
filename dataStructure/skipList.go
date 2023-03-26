@@ -69,7 +69,7 @@ func (list *SkipList) find(target any) [maxLevel]*skipListNode {
 	ans := [maxLevel]*skipListNode{}
 	curr := list.root
 	for i := maxLevel - 1; i >= 0; i-- {
-		for curr.next[i] != nil && list.compareFunction(curr.next[i], target) == -1 {
+		for curr.next[i] != nil && list.compareFunction(curr.next[i].val, target) == -1 {
 			curr = curr.next[i]
 		}
 		ans[i] = curr

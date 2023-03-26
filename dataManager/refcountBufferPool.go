@@ -96,6 +96,8 @@ func (p *RefCountBufferPoolImpl) Release(obj PoolObj) error {
 
 // Close shut up the buffer pool safely
 func (p *RefCountBufferPoolImpl) Close() error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	for key, obj := range p.cache {
 		if obj.IsDirty() {
 			if err := p.ds.FlushBackToDataSource(obj); err != nil {

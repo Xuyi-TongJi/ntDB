@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
-	"fmt"
+	"log"
 	"reflect"
 	"sync"
 )
@@ -13,8 +13,6 @@ import (
 
 type Page interface {
 	PoolObj
-	Lock()
-	Unlock()
 	Append(toAdd []byte) error              // 插入数据
 	Update(toUp []byte, offset int64) error // 更新数据
 	CheckInitVersion() bool
@@ -51,7 +49,7 @@ const (
 )
 
 type PageImpl struct {
-	lock   sync.RWMutex
+	lock   sync.RWMutex // 保护data和dirty字段
 	data   []byte
 	dirty  bool
 	pageId int64
@@ -69,6 +67,8 @@ func (p *PageImpl) Unlock() {
 }
 
 func (p *PageImpl) IsDirty() bool {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 	return p.dirty
 }
 
@@ -109,8 +109,7 @@ func (p *PageImpl) CheckInitVersion() bool {
 	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
-	data := p.GetData()
-	v1, v2 := data[VcOn:VcOn+VcOffset], data[VcOff:VcOff+VcOffset]
+	v1, v2 := p.data[VcOn:VcOn+VcOffset], p.data[VcOff:VcOff+VcOffset]
 	return reflect.DeepEqual(v1, v2)
 }
 
@@ -119,8 +118,7 @@ func (p *PageImpl) InitVersion() {
 	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
-	data := p.GetData()
-	if _, err := rand.Read(data[VcOn : VcOn+VcOffset]); err != nil {
+	if _, err := rand.Read(p.data[VcOn : VcOn+VcOffset]); err != nil {
 		panic("Error happen when initializing version\n")
 	}
 }
@@ -130,8 +128,7 @@ func (p *PageImpl) UpdateVersion() {
 	if p.GetPageType() != DbMetaPage {
 		panic("Invalid page type when executing version checking\n")
 	}
-	data := p.GetData()
-	copy(data[VcOff:VcOff+VcOffset], data[VcOn:VcOn+VcOffset])
+	copy(p.data[VcOff:VcOff+VcOffset], p.data[VcOn:VcOn+VcOffset])
 }
 
 // 普通页管理
@@ -144,21 +141,26 @@ func (e *ErrorPageOverFlow) Error() string {
 }
 
 // Append 向页末尾添加数据
+// 用于DataManager向上层提供插入数据的操作
 func (p *PageImpl) Append(toAdd []byte) error {
 	p.Lock()
 	defer p.Unlock()
-	used, length := p.GetUsed(), int64(len(toAdd))
+	tmp := p.data[:SzPgUsed]
+	used, length := int64(binary.BigEndian.Uint32(tmp)), int64(len(toAdd))
+	log.Printf("[PAGE LINE 148] APPEND PAGE %d %d\n", p.pageId, used)
 	if length+used > PageSize {
 		return &ErrorPageOverFlow{}
 	}
-	copy(p.GetData()[used:used+length], toAdd)
-	p.SetUsed(int32(used + length))
-	p.SetDirty(true)
-	fmt.Printf("sdfsldjfskdjflsjdfl")
+	copy(p.data[used:used+length], toAdd)
+	buf := bytes.NewBuffer([]byte{})
+	_ = binary.Write(buf, binary.BigEndian, int32(used+length))
+	copy(p.data[:SzPgUsed], buf.Bytes())
+	p.dirty = true
 	return nil
 }
 
 // Update 更新数据页的数据
+// 用于redo log恢复操作
 func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	p.Lock()
 	defer p.Unlock()
@@ -166,19 +168,22 @@ func (p *PageImpl) Update(toUp []byte, offset int64) error {
 	if length+offset > PageSize {
 		return &ErrorPageOverFlow{}
 	}
-	copy(p.GetData()[offset:offset+length], toUp)
-	currentLength := p.GetUsed()
+	copy(p.data[offset:offset+length], toUp)
+	buf := p.data[:SzPgUsed]
+	currentLength := int64(binary.BigEndian.Uint32(buf))
 	if length+offset > currentLength {
-		p.SetUsed(int32(length + offset))
+		buffer := bytes.NewBuffer([]byte{})
+		_ = binary.Write(buffer, binary.BigEndian, int32(length+offset))
+		copy(p.data[:SzPgUsed], buffer.Bytes())
 	}
-	p.SetDirty(true)
+	p.dirty = true
 	return nil
 }
 
 func (p *PageImpl) GetUsed() int64 {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
-	buf := p.GetData()[:SzPgUsed]
+	buf := p.data[:SzPgUsed]
 	return int64(binary.BigEndian.Uint32(buf))
 }
 
@@ -187,17 +192,18 @@ func (p *PageImpl) SetUsed(used int32) {
 	defer p.lock.Unlock()
 	buf := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buf, binary.BigEndian, used)
-	copy(p.GetData()[:SzPgUsed], buf.Bytes())
+	copy(p.data[:SzPgUsed], buf.Bytes())
 }
 
 func (p *PageImpl) GetFree() int64 {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
-	return PageSize - p.GetUsed()
+	buf := p.data[:SzPgUsed]
+	return PageSize - int64(binary.BigEndian.Uint32(buf))
 }
 
 func (p *PageImpl) GetPageType() PageType {
-	buf := p.GetData()[SzPgUsed : SzPgUsed+SzPageType]
+	buf := p.data[SzPgUsed : SzPgUsed+SzPageType]
 	return PageType(binary.BigEndian.Uint32(buf))
 }
 

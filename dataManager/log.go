@@ -28,7 +28,7 @@ type Log interface {
 }
 
 const (
-	SEED       int64  = 1331
+	SEED       int64  = 131
 	MOD        int64  = 998244353
 	LogSuffix  string = "_redo.log"
 	SzCheckSum int64  = 8
@@ -36,10 +36,11 @@ const (
 )
 
 type RedoLog struct {
-	file     *os.File
-	checkSum int64
-	lock     *sync.Mutex
-	offset   int64 // current pointer used for iterator
+	file         *os.File
+	checkSum     int64
+	lock         *sync.Mutex
+	offset       int64 // current pointer used for iterator
+	writePointer int64
 }
 
 func (redo *RedoLog) UpdateLog(uid, xid int64, oldRaw, raw []byte) {
@@ -52,7 +53,7 @@ func (redo *RedoLog) InsertLog(uid, xid int64, raw []byte) {
 	pageId, offset := uidTrans(uid)
 	// Insert 本质 INVALID -> VALID
 	oldRaw := SetRawInvalid(raw)
-	log.Printf("Sdfsdfsdf %d %d %d %d\n", xid, pageId, offset, len(oldRaw))
+	log.Printf("[REDO LOG line 55] PREPARE TO INSERT A LOG %d %d %d %d\n", xid, pageId, offset, len(oldRaw))
 	insertLog := wrapUpdateLog(xid, pageId, offset, int64(len(oldRaw)), oldRaw, raw)
 	redo.log(insertLog)
 }
@@ -66,13 +67,10 @@ func (redo *RedoLog) log(data []byte) {
 	defer redo.lock.Unlock()
 	logWrap := wrapLog(data)
 	// write(append)
-	stat, _ := redo.file.Stat()
-	fmt.Println("sdfsdfsdf   ", stat.Size())
-	if _, err := redo.file.Write(logWrap); err != nil {
+	if _, err := redo.file.WriteAt(logWrap, redo.writePointer); err != nil {
 		panic(fmt.Sprintf("Error occurs when writing redo log, err = %s", err))
 	}
-	stat, _ = redo.file.Stat()
-	fmt.Println("sdfsdfsdf   ", stat.Size())
+	redo.writePointer += int64(len(logWrap))
 	// finally update the checkSum
 	nextCheckSum := calcCheckSum(redo.checkSum, data)
 	buffer := bytes.NewBuffer([]byte{})
@@ -81,7 +79,10 @@ func (redo *RedoLog) log(data []byte) {
 		panic(fmt.Sprintf("Error occurs when writing redo log, err = %s", err))
 	}
 	dataLen := int64(binary.BigEndian.Uint32(logWrap[:SzData]))
-	log.Printf("[Data Manager] Log a new redo log, current checkSum = %d, dataLength = %d\n", nextCheckSum, dataLen) // PACK
+
+	tmp := make([]byte, SzCheckSum)
+	_, _ = redo.file.ReadAt(tmp, 0)
+	log.Printf("[REDO LOG LINE 80] Log a new redo log, current checkSum = %d, %d, dataLength = %d\n", nextCheckSum, int64(binary.BigEndian.Uint64(tmp)), dataLen) // PACK
 	read := make([]byte, SzData)
 	_, _ = redo.file.ReadAt(read, 8)
 	redo.checkSum = nextCheckSum
@@ -115,11 +116,13 @@ func (redo *RedoLog) ResetLog() {
 	buffer := bytes.NewBuffer(make([]byte, 0))
 	_ = binary.Write(buffer, binary.BigEndian, int64(0))
 	// 8 bytes checkSum
-	if _, err := redo.file.Write(buffer.Bytes()); err != nil {
+	if _, err := redo.file.WriteAt(buffer.Bytes(), 0); err != nil {
 		panic(fmt.Sprintf("Error occurs when reseting redo log, err : %s\n", err))
 	}
-	stat, _ := redo.file.Stat()
-	log.Printf("Sdfdsfsdfasdfsadffsdfsadfaskdfhsadlfasldfjkasldfjslajdflsadjflsadfasdfasdfa %d\n", stat.Size())
+	redo.writePointer = SzCheckSum
+	buf := make([]byte, SzCheckSum)
+	_, _ = redo.file.ReadAt(buf, 0)
+	log.Printf("[REDO LOG LINE 120] RESET LOG CHECKSUM = %d\n", int64(binary.BigEndian.Uint64(buf)))
 	redo.reset()
 }
 
@@ -153,8 +156,8 @@ func (redo *RedoLog) removeTail() {
 		}
 		checkedCheckSum = calcCheckSum(checkedCheckSum, nextLogData)
 	}
-	log.Printf("%d %d\n", checkedCheckSum, redo.checkSum)
 	if checkedCheckSum != redo.checkSum {
+		log.Printf("[REDO LOG CHECK SUM FAIL] %d %d\n", checkedCheckSum, redo.checkSum)
 		panic("Invalid redo log file\n")
 	}
 	// truncate
@@ -194,7 +197,6 @@ func (redo *RedoLog) nextUnlock() (data []byte) {
 	}
 	// 当且仅当完整读完一条log时，更改offset
 	redo.offset += SzData + SzCheckSum + dataSize
-	log.Printf("OFFSET %d  dataLength %d\n", redo.offset, dataSize)
 	return
 }
 
@@ -248,16 +250,17 @@ func (redo *RedoLog) CrashRecover(pc PageCache, tm transactions.TransactionManag
 			break
 		}
 		x, pi, offset, oldRawLength, _, _ := parseUpdateLog(nextLog)
-		log.Printf("Sdfsdfsdf %d %d %d %d\n", x, pi, offset, oldRawLength)
+
 		xid := getXid(nextLog)
-		log.Printf("XID,  %d\n", xid)
 		pageId := getPageId(nextLog)
 		xStatus := tm.Status(xid)
 		if xStatus&(1<<transactions.FINISH) == 0 {
 			// undo 撤销
+			log.Printf("[REDO LOG LINE 253] RECOVER NEXT LOG RAW UNDO %d %d %d %d\n", x, pi, offset, oldRawLength)
 			toUndo[xid] = append(toUndo[xid], nextLog)
 		} else {
 			// redo 重做
+			log.Printf("[REDO LOG LINE 253] RECOVER NEXT LOG RAW REDO %d %d %d %d\n", x, pi, offset, oldRawLength)
 			toRedo[xid] = append(toRedo[xid], nextLog)
 		}
 		if pageId > maxPageId {
@@ -369,8 +372,6 @@ func CreateRedoLog(path string, lock *sync.Mutex) Log {
 		lock:     lock,
 	}
 	redoLog.reset()
-	stat, _ := file.Stat()
-	fmt.Printf("CREATE LOG %d\n", stat.Size())
 	return redoLog
 }
 
@@ -391,11 +392,13 @@ func OpenRedoLog(path string, lock *sync.Mutex) Log {
 
 // utils
 
+// 滚动哈希计算校验和
 func calcCheckSum(checkSum int64, data []byte) int64 {
+	next := checkSum
 	for _, b := range data {
-		checkSum = (checkSum + SEED*int64(b)%MOD) % MOD
+		next = (next*SEED%MOD + int64(b)) % MOD
 	}
-	return checkSum
+	return next
 }
 
 // 将size...checkSum...data 包装成一条log

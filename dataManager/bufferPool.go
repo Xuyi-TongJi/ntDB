@@ -1,6 +1,8 @@
 package dataManager
 
 type PoolObj interface {
+	Lock()
+	Unlock()
 	IsDirty() bool
 	SetDirty(dirty bool)
 	SetData(data []byte)
