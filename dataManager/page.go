@@ -147,7 +147,7 @@ func (p *PageImpl) Append(toAdd []byte) error {
 	defer p.Unlock()
 	tmp := p.data[:SzPgUsed]
 	used, length := int64(binary.BigEndian.Uint32(tmp)), int64(len(toAdd))
-	log.Printf("[PAGE LINE 148] APPEND PAGE %d %d\n", p.pageId, used)
+	log.Printf("[PAGE LINE 148] APPEND PAGE %d %d, LEN: %d\n", p.pageId, used, length)
 	if length+used > PageSize {
 		return &ErrorPageOverFlow{}
 	}
@@ -155,6 +155,7 @@ func (p *PageImpl) Append(toAdd []byte) error {
 	buf := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buf, binary.BigEndian, int32(used+length))
 	copy(p.data[:SzPgUsed], buf.Bytes())
+	log.Printf("[PAGE LINE 158] APPEND PAGE %d, USED: %d\n", p.pageId, used+length)
 	p.dirty = true
 	return nil
 }

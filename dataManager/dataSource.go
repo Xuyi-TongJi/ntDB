@@ -63,6 +63,7 @@ func (ch *FileSystemDataSource) GetFromDataSource(obj PoolObj) ([]byte, error) {
 	offset, size := fso.GetOffset(), fso.GetDataSize()
 	buf := make([]byte, size)
 	_, err := ch.file.ReadAt(buf, offset)
+	log.Printf("----------------[FILE SYSTEM LINE 66] READ AT %d %d\n", fso.GetId(), fso.GetOffset()) // pageId (pageId-1)*pageSize
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +80,7 @@ func (ch *FileSystemDataSource) FlushBackToDataSource(obj PoolObj) error {
 	}
 	obj.Lock()
 	defer obj.Unlock()
+	log.Printf("----------------[FILE SYSTEM LINE 82] WRITE AT %d %d\n", fso.GetId(), fso.GetOffset())
 	_, err := ch.file.WriteAt(fso.GetData(), fso.GetOffset())
 	return err
 }

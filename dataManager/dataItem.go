@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 )
 
 // DataItem
@@ -59,7 +60,8 @@ func NewDataItem(raw []byte, dm DataManager,
 // 深拷贝
 // [valid]1[Length]8[DATA]... -> [DATA]
 func (di *DataItemImpl) GetData() []byte {
-	data := di.raw[SzDIValid+SzDIDataSize:]
+	length := di.GetDataLength()
+	data := di.raw[SzDIValid+SzDIDataSize : SzDIValid+SzDIDataSize+length]
 	copyData := make([]byte, len(data))
 	copy(copyData, data)
 	return copyData
@@ -123,12 +125,13 @@ func (di *DataItemImpl) Update(newRaw []byte) {
 // WrapDataItemRaw
 // RAW: [valid]1[dataSize]8[data]
 // 8字节对齐
-func WrapDataItemRaw(raw []byte) []byte {
-	size := int64(len(raw))
+func WrapDataItemRaw(data []byte) []byte {
+	size := int64(len(data))
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, DIValid)
 	_ = binary.Write(buffer, binary.BigEndian, size)
-	_ = binary.Write(buffer, binary.BigEndian, raw)
+	_ = binary.Write(buffer, binary.BigEndian, data)
+	log.Printf("[DATA ITEM LINE 134] WRAP DATAITEM, size = %d\n", size)
 	// 8字节对齐
 	padding := len(buffer.Bytes()) % 8
 	if padding != 0 {

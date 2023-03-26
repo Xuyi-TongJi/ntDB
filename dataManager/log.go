@@ -151,9 +151,10 @@ func (redo *RedoLog) removeTail() {
 	var checkedCheckSum int64 = 0
 	for {
 		nextLogData := redo.nextUnlock()
-		if len(nextLogData) == 0 {
+		if nextLogData == nil || len(nextLogData) == 0 {
 			break
 		}
+		// 尚有一条完整记录
 		checkedCheckSum = calcCheckSum(checkedCheckSum, nextLogData)
 	}
 	if checkedCheckSum != redo.checkSum {
@@ -394,11 +395,11 @@ func OpenRedoLog(path string, lock *sync.Mutex) Log {
 
 // 滚动哈希计算校验和
 func calcCheckSum(checkSum int64, data []byte) int64 {
-	next := checkSum
+	next := int64(0)
 	for _, b := range data {
 		next = (next*SEED%MOD + int64(b)) % MOD
 	}
-	return next
+	return (next + checkSum) % MOD
 }
 
 // 将size...checkSum...data 包装成一条log

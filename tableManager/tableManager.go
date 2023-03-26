@@ -154,7 +154,7 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 			if err != nil {
 				return err
 			}
-			newTableRaw := WrapTableRaw(insert.TbName, tb.GetNextUid(), tb.GetFields(), uid, tb.GetPrimaryKey()+1)
+			newTableRaw := DefaultTableFactory.WrapTableRaw(insert.TbName, tb.GetNextUid(), tb.GetFields(), uid, tb.GetPrimaryKey()+1)
 			// 当前事物一定已经获取表锁, 这个Update和上面的Insert一定是原子的
 			newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTableRaw)
 			// **** newUid must equal to the current one
@@ -316,7 +316,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 							}
 						} else {
 							// rewrite the table
-							tableRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
+							tableRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
 							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
 							if newTableUid != tb.GetUid() {
 								panic("Fatal Error occurs when updating table metadata raw")
@@ -397,7 +397,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 				}
 				if row.GetPrevUid() == 0 {
 					// update table
-					newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid(), tb.GetPrimaryKey())
+					newTbRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid(), tb.GetPrimaryKey())
 					if newTbUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
 						tm.Abort(xid)
 						return err
@@ -459,6 +459,10 @@ func (tm *TMImpl) loadField(tb Table, uid int64) Field {
 	}
 	// RECORD
 	// [ROLLBACK]8[XID]8[Data length]8[DATA]
+
+	xid := record.GetXid()
+	log.Printf("[TABLE MANAGER LINE 464] LOAD FIELD CREATED BY XID = %d\n", xid)
+
 	data := record.GetData()
 	// [DATA] -> of field meta data
 	return DefaultFieldFactory.NewField(tb, uid, data, tm.im)
@@ -470,7 +474,7 @@ func (tm *TMImpl) CreateField(xid int64, fieldName string, fieldType FieldType, 
 		// TODO index
 		// indexUid = tm.im.CreateIndex(xid, DefaultFieldFactory.GetCompareFunction(fieldType))
 	}
-	raw := WrapFieldRaw(fieldName, fieldType, indexUid) // format RECORD DATA
+	raw := DefaultFieldFactory.WrapFieldRaw(fieldName, fieldType, indexUid) // format RECORD DATA
 	// insert metadata to dm
 	if uid, err := tm.vm.Insert(xid, raw, versionManager.MetaDataTbUid); err != nil {
 		return nil, err
@@ -510,7 +514,7 @@ func (tm *TMImpl) CreateTable(xid int64, tableName string, fields []*FieldCreate
 		}
 		fs[i] = field // Field的raw和table信息无关
 	}
-	raw := WrapTableRaw(tableName, tm.topTableUid, fs, 0, 0)
+	raw := DefaultTableFactory.WrapTableRaw(tableName, tm.topTableUid, fs, 0, 0)
 	if uid, err := tm.vm.Insert(xid, raw, versionManager.MetaDataTbUid); err != nil {
 		return nil, err
 	} else {
@@ -615,7 +619,7 @@ func (tm *TMImpl) deleteAll(xid int64, tb Table) error {
 			}
 		}
 		// update table
-		newTbRaw := WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), int64(0), tb.GetPrimaryKey())
+		newTbRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), int64(0), tb.GetPrimaryKey())
 		if newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
 			return err
 		} else {

@@ -3,6 +3,7 @@ package versionManager
 import (
 	"bytes"
 	"encoding/binary"
+	"log"
 	"myDB/dataManager"
 )
 
@@ -36,6 +37,8 @@ type Record interface {
 	IsSnapShot() bool
 }
 
+// RecordImpl
+// 用于当前读
 type RecordImpl struct {
 	valid    bool
 	rollback int64
@@ -74,17 +77,8 @@ func (record *RecordImpl) GetXid() int64 {
 }
 
 func (record *RecordImpl) GetPrevious() Record {
-	if record.rollback == 0 {
-		return nil
-	} else {
-		recordRaw := record.undo.Read(record.rollback)
-		return DefaultRecordFactory.NewSnapShot(recordRaw, record.undo)
-	}
+	panic("GetPrevious is not supported in 'RecordImpl' type")
 }
-
-//func (record *RecordImpl) Release() {
-//	record.di.Release()
-//}
 
 func (record *RecordImpl) IsSnapShot() bool {
 	return false
@@ -170,6 +164,7 @@ func (factory *RecordImplFactory) NewSnapShot(raw []byte, undo Log) Record {
 	xid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcXid]))
 	offset += SzRcXid
 	data := raw[offset:]
+	log.Printf("[RECORD LINE 167] CREATE SNAP SHOT %d %d %d\n", raw[0], xid, len(data))
 	return &SnapShot{
 		valid:    valid,
 		rollback: rollback,
@@ -182,13 +177,12 @@ func (factory *RecordImplFactory) NewSnapShot(raw []byte, undo Log) Record {
 var DefaultRecordFactory RecordFactory
 
 // WrapRecordRaw
-// Data Format: [ROLLBACK]8[XID]8[SIZE]8[DATA]
+// Data Format: [VALID]1[ROLLBACK]8[XID]8[SIZE]8[DATA]
 func WrapRecordRaw(valid bool, data []byte, xid int64, rollback int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, valid)
 	_ = binary.Write(buffer, binary.BigEndian, rollback)
 	_ = binary.Write(buffer, binary.BigEndian, xid)
-	_ = binary.Write(buffer, binary.BigEndian, int64(len(data)))
 	_ = binary.Write(buffer, binary.BigEndian, data)
 	return buffer.Bytes()
 }

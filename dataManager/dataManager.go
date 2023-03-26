@@ -120,11 +120,8 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	}
 	offset := pg.GetUsed()
 	// LOG FIRST
-	log.Printf("[Data Manager LINE 123] locate at %d %d\n", pg.GetId(), offset)
 	dm.redo.InsertLog(getUid(pg.GetId(), offset), xid, raw)
-	log.Printf("[Data Manager LINE 125] finish log %d %d\n", pg.GetId(), offset)
 	// update page data
-	// TODO
 	if err := pg.Append(raw); err != nil {
 		panic(fmt.Sprintf("Error occurs when updating page, err = %s\n", err))
 	}

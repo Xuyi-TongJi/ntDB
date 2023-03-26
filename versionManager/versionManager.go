@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"myDB/dataManager"
+	"myDB/debug"
 	"myDB/transactions"
 	"sync"
 )
@@ -50,14 +51,19 @@ const (
 // 超级事物只会进行快照读
 // 可能返回nil
 func (v *VmImpl) Read(xid, uid int64) Record {
-	transaction := v.getTransaction(xid)
-	if transaction == nil {
-		panic("Error occurs when getting transaction struct, it is not an active transaction")
-	}
-	if transaction.level == ReadCommitted {
-		transaction.rv = v.CreateReadView(xid)
+	var transaction *Transaction
+	if xid != transactions.SuperXID {
+		transaction = v.getTransaction(xid)
+		if transaction == nil {
+			panic("Error occurs when getting transaction struct, it is not an active transaction")
+		}
+		if transaction.level == ReadCommitted {
+			transaction.rv = v.CreateReadView(xid)
+		}
 	}
 	di := v.dm.ReadSnapShot(uid) // DataItem
+	pg, of := debug.UidTrans(uid)
+	log.Printf("[VERSION MANAGER LINE 65] READING DATAITEM %d %d\n", pg, of)
 	if di == nil {
 		return nil
 	}
@@ -69,7 +75,7 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 	for snapShot != nil && !v.checkMvccValid(snapShot, xid) {
 		snapShot = snapShot.GetPrevious()
 	}
-	if !snapShot.IsValid() {
+	if snapShot == nil && !snapShot.IsValid() {
 		return nil
 	}
 	return snapShot
@@ -127,21 +133,25 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	if tran == nil {
 		panic("Error occurs when getting transaction struct, it is not an active transaction")
 	}
-	log.Printf("[VERSION MANAGER LINE 144] Transaction %d INSERT..\n", xid)
 	// metaData, 不需要获得锁，直接插入, 但是在插入结束后，xid会直接获得这个uid的锁
+	raw := WrapRecordRaw(true, data, xid, 0)
 	if tbUid == MetaDataTbUid {
-		return v.dm.Insert(xid, data), nil
+		uid := v.dm.Insert(xid, raw)
+		pg, of := debug.UidTrans(uid)
+		log.Printf("[VERSION MANAGER LINE 139] Transaction %d INSERT FINISHED, INSERT AT %d %d, length = %d\n", xid, pg, of, len(data))
+		return uid, nil
 	}
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return -1, err
 	}
-	uid := v.dm.Insert(xid, data)
+	uid := v.dm.Insert(xid, raw)
+	pg, of := debug.UidTrans(uid)
+	log.Printf("[VERSION MANAGER LINE 148] Transaction %d INSERT FINISHED, INSERT AT %d %d, length = %d\n", xid, pg, of, len(data))
 	tran.AddInsert(uid)
 	// 插入的是表元数据，xid获得uid的锁, must success
 	if tbUid == MetaDataTbUid {
 		_ = v.tryToLockTable(xid, uid)
 	}
-	log.Printf("[VERSION MANAGER LINE 144] Transaction %d INSERT FINISHED\n", xid)
 	return uid, nil
 }
 
@@ -197,6 +207,7 @@ func (v *VmImpl) Begin() int64 {
 		v.nextXid = xid + 1
 	}
 	v.activeTrans[xid] = trans
+	log.Printf("[VERSION MANAGER LINE 205] Transaction %d BEGIN \n", xid)
 	return xid
 }
 
@@ -214,6 +225,7 @@ func (v *VmImpl) Commit(xid int64) {
 	v.endTransaction(xid, tran)
 	// tm
 	v.tm.Commit(xid)
+	log.Printf("[VERSION MANAGER LINE 219] Transaction %d COMMITED\n", xid)
 }
 
 // Abort

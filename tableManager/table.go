@@ -3,6 +3,7 @@ package tableManager
 import (
 	"bytes"
 	"encoding/binary"
+	"log"
 )
 
 func init() {
@@ -78,27 +79,9 @@ const (
 	TableMask int32       = 0x3f3f3f3f
 )
 
-// WrapTableRaw
-// 包装一个空表的Raw
-func WrapTableRaw(tableName string, nextUid int64, fields []Field, firstRecordUid int64, primaryKey int64) []byte {
-	buffer := bytes.NewBuffer([]byte{})
-	stringLength := int64(len(tableName))
-	_ = binary.Write(buffer, binary.BigEndian, stringLength)
-	_ = binary.Write(buffer, binary.BigEndian, []byte(tableName))
-	_ = binary.Write(buffer, binary.BigEndian, nextUid)
-	_ = binary.Write(buffer, binary.BigEndian, primaryKey)
-	fieldLength := int32(len(fields))
-	_ = binary.Write(buffer, binary.BigEndian, fieldLength)
-	for i := int32(0); i < fieldLength; i++ {
-		uid := fields[i].GetUid()
-		_ = binary.Write(buffer, binary.BigEndian, uid)
-	}
-	_ = binary.Write(buffer, binary.BigEndian, firstRecordUid)
-	return buffer.Bytes()
-}
-
 type TableFactory interface {
 	NewTable(uid int64, raw []byte, tm TableManager) Table
+	WrapTableRaw(tableName string, nextUid int64, fields []Field, firstRecordUid int64, primaryKey int64) []byte
 }
 
 type TableImplFactory struct{}
@@ -107,6 +90,7 @@ type TableImplFactory struct{}
 // 当raw不是一个有效的Table字段时，panic
 func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Table {
 	// check if this is a table
+	log.Printf("[TABLE LINE 93] WRAP TABLE %s\n", raw)
 	mask := int32(binary.BigEndian.Uint32(raw[:SzMask]))
 	if mask != TableMask {
 		panic("Error occurs when creating a table struct, it is not a valid table raw")
@@ -130,7 +114,7 @@ func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Tabl
 		firstRecordUid: 0,
 		primaryKey:     primaryKey,
 	}
-	pointer := SzVariableLength + tableNameLength + SzTableUid + SzTableFieldNumber + SzPrimaryKey
+	pointer := SzVariableLength + tableNameLength + SzTableUid + SzPrimaryKey + SzTableFieldNumber
 	for i := int32(0); i < tableFieldNumber; i++ {
 		fUid := int64(binary.BigEndian.Uint64(raw[pointer : pointer+SzFieldUid]))
 		pointer += SzFieldUid
@@ -138,6 +122,27 @@ func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Tabl
 	}
 	table.firstRecordUid = int64(binary.BigEndian.Uint64(raw[pointer:]))
 	return table
+}
+
+// WrapTableRaw
+// 包装一个空表的Raw
+func (f *TableImplFactory) WrapTableRaw(tableName string, nextUid int64, fields []Field, firstRecordUid int64, primaryKey int64) []byte {
+	buffer := bytes.NewBuffer([]byte{})
+	stringLength := int64(len(tableName))
+	_ = binary.Write(buffer, binary.BigEndian, TableMask)
+	_ = binary.Write(buffer, binary.BigEndian, stringLength)
+	_ = binary.Write(buffer, binary.BigEndian, []byte(tableName))
+	_ = binary.Write(buffer, binary.BigEndian, nextUid)
+	_ = binary.Write(buffer, binary.BigEndian, primaryKey)
+	fieldLength := int32(len(fields))
+	_ = binary.Write(buffer, binary.BigEndian, fieldLength)
+	for i := int32(0); i < fieldLength; i++ {
+		uid := fields[i].GetUid()
+		_ = binary.Write(buffer, binary.BigEndian, uid)
+	}
+	_ = binary.Write(buffer, binary.BigEndian, firstRecordUid)
+	log.Printf("[TABLE LINE 143] WRAP TABLE %s\n", buffer.Bytes())
+	return buffer.Bytes()
 }
 
 var DefaultTableFactory TableFactory

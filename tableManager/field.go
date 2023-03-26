@@ -3,6 +3,8 @@ package tableManager
 import (
 	"bytes"
 	"encoding/binary"
+	"log"
+	"myDB/debug"
 	"myDB/indexManager"
 	"strconv"
 	"strings"
@@ -115,6 +117,7 @@ const (
 
 type FieldFactory interface {
 	NewField(tb Table, uid int64, raw []byte, im indexManager.IndexManager) Field
+	WrapFieldRaw(fName string, fType FieldType, indexUid int64) []byte
 	GetCompareFunction(fType FieldType) func(any, any) int
 }
 
@@ -126,8 +129,18 @@ type FieldImplFactory struct {
 // 工厂方法
 // 当Field不是一个有效的Field字段时，panic
 func (f *FieldImplFactory) NewField(tb Table, uid int64, raw []byte, im indexManager.IndexManager) Field {
+	pg, of := debug.UidTrans(uid)
+	log.Printf("[FIELD LINE 133] NEW FIELD:  %d %d\n", pg, of)
+	log.Printf("[FIELD LINE 134] NEW FIELD: %s\n", string(raw))
 	mask := int32(binary.BigEndian.Uint32(raw[:SzMask]))
 	if mask != FieldMask {
+		raw = raw[SzMask:]
+		fieldNameLength := int64(binary.BigEndian.Uint64(raw[:SzVariableLength]))
+		fieldName := string(raw[SzVariableLength : SzVariableLength+fieldNameLength])
+		fieldType := FieldType(binary.BigEndian.
+			Uint64(raw[SzVariableLength+fieldNameLength : SzVariableLength+fieldNameLength+SzFieldType]))
+		indexUid := int64(binary.BigEndian.Uint64(raw[SzVariableLength+fieldNameLength+SzFieldType:]))
+		log.Printf("[FIELD LINE 132] MASK, FNAME, FTYPE, INDEX ->  %d %s %d %d\n", mask, fieldName, fieldType, indexUid)
 		panic("Error occurs when creating a field struct, it is not a valid field raw")
 	}
 	raw = raw[SzMask:]
@@ -159,13 +172,14 @@ var DefaultFieldFactory FieldFactory
 
 // utils
 
-func WrapFieldRaw(fName string, fType FieldType, indexUid int64) []byte {
+func (f *FieldImplFactory) WrapFieldRaw(fName string, fType FieldType, indexUid int64) []byte {
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, FieldMask)
 	_ = binary.Write(buffer, binary.BigEndian, int64(len(fName)))
 	_ = binary.Write(buffer, binary.BigEndian, []byte(fName))
 	_ = binary.Write(buffer, binary.BigEndian, int64(fType))
 	_ = binary.Write(buffer, binary.BigEndian, indexUid)
+	log.Printf("[FIELD LINE 182] WRAP FIELD: %s\n", string(buffer.Bytes()))
 	return buffer.Bytes()
 }
 
