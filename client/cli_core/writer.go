@@ -34,11 +34,11 @@ func StartWriter(conn net.Conn, stop chan error) {
 			}
 			index += n
 		}
-		// log.Printf("[CLIENT WRITER] Send message %s success\n", s)
 	}
 }
 
-// const s string = "*3\r\n$3\r\nset\r\n$3\r\nkey\r\n$3\r\nval\r\n"
+// bulk message example
+// set key value --> "*3\r\n$3\r\nset\r\n$3\r\nkey\r\n$3\r\nval\r\n"
 
 func packBulkArray(req []string) string {
 	sCnt := strconv.FormatInt(int64(len(req)), 10)
