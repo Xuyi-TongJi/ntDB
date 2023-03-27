@@ -40,9 +40,10 @@ type TableManager interface {
 }
 
 const (
-	TMP         string = "tmp"
-	SzMask      int64  = 4 // 字段类型Mask
-	bootFileSuf string = ".boot"
+	PrimaryKeyCol string = "ID"
+	TMP           string = "tmp"
+	SzMask        int64  = 4 // 字段类型Mask
+	bootFileSuf   string = ".boot"
 )
 
 type TMImpl struct {
@@ -63,6 +64,7 @@ type ErrorInvalidFieldCount struct{}
 type ErrorInvalidFieldName struct{}
 type ErrorUnsupportedOperationType struct{}
 type ErrorTableAlreadyExist struct{}
+type ErrorFieldNotExist struct{}
 
 func (err *ErrorTableNotExist) Error() string {
 	return "Table doesn't exist"
@@ -82,6 +84,10 @@ func (err *ErrorUnsupportedOperationType) Error() string {
 
 func (err *ErrorTableAlreadyExist) Error() string {
 	return "This table is already created"
+}
+
+func (err *ErrorFieldNotExist) Error() string {
+	return "One or more field not exists in this table"
 }
 
 func (tm *TMImpl) Begin() int64 {
@@ -198,6 +204,11 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 				return nil, err
 			}
 		}
+		// check字段条件, 查找字段下标
+		targetFieldsId, er := tm.checkFieldNames(tb, sel.FNames)
+		if er != nil {
+			return nil, er
+		}
 		// read data
 		var (
 			rows []Row
@@ -211,15 +222,6 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 		if err != nil {
 			return nil, err
 		}
-		targetFieldsId := make([]int, 0)
-		for i, field := range tb.GetFields() {
-			for _, fN := range sel.FNames {
-				if field.GetName() == fN {
-					targetFieldsId = append(targetFieldsId, i)
-					break
-				}
-			}
-		}
 		rowCnt := 1
 		// title
 		response := tm.wrapTableResponseTitle(sel.FNames)
@@ -229,9 +231,9 @@ func (tm *TMImpl) Read(xid int64, sel *Select) ([]*ResponseObject, error) {
 				colCnt := 0
 				for _, target := range targetFieldsId {
 					// row.GetValues[target]
-					value, _ := fieldValueToBytes(tb.GetFields()[target].GetFType(), row.GetValues()[target])
+					value, _ := fieldValueToString(tb.GetFields()[target].GetFType(), row.GetValues()[target])
 					response = append(response, &ResponseObject{
-						Payload: string(value),
+						Payload: value,
 						RowId:   rowCnt,
 						ColId:   colCnt,
 					})
@@ -254,6 +256,8 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 	if record := tm.vm.Read(xid, uid); record == nil {
 		return &ErrorTableNotExist{}
 	} else {
+		log.Printf("[TABLE MANAGER LINE 259] NEW RECORD RAW %d\n", len(record.GetRaw()))
+		log.Printf("[TABLE MANAGER LINE 260] OLD TABEL RAW LENGTH %d", len(record.GetData()))
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// check update valid
 		var target = -1
@@ -266,8 +270,6 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 		if target == -1 {
 			return &ErrorInvalidFieldName{}
 		}
-		var value any
-		value, err := traverseStringToValue(tb.GetFields()[target].GetFType(), update.ToUpdate)
 		if err != nil {
 			return err
 		}
@@ -278,6 +280,11 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 			}
 		}
 		rUid := tb.GetFirstRecordUid()
+		// check toUpdate match field type
+		value, err := traverseStringToValue(tb.GetFields()[target].GetFType(), update.ToUpdate)
+		if err != nil {
+			return err
+		}
 		for rUid != 0 {
 			record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
 			if err != nil {
@@ -286,14 +293,12 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 			}
 			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
 			if matchWhereCondition(row, tb, update.Where) {
-				// update value
-				updateValues := row.GetValues()
-				updateValues[target] = value
-				if raw, err := WrapRowRaw(tb, RECORD, row.GetNextUid(), row.GetNextUid(), updateValues); err != nil {
+				row.GetValues()[target] = value // any value
+				if raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), row.GetValues()); err != nil {
 					tm.Abort(xid)
 					return err
 				} else {
-					newUid, err := tm.vm.Update(xid, uid, tb.GetUid(), raw)
+					newUid, err := tm.vm.Update(xid, row.GetUid(), tb.GetUid(), raw)
 					if err != nil {
 						tm.Abort(xid)
 						return err
@@ -328,10 +333,12 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 						} else {
 							// rewrite the table
 							tableRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
+							log.Printf("[TABLE MANAGER LINE 335] NEW TABEL RAW LENGTH %d", len(tableRaw))
 							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
 							if newTableUid != tb.GetUid() {
 								panic("Fatal Error occurs when updating table metadata raw")
 							}
+							log.Printf("%d %d\n", newTableUid, tb.GetUid())
 							if err != nil {
 								tm.Abort(xid)
 								return err
@@ -683,6 +690,25 @@ func (tm *TMImpl) checkWhereCondition(tb Table, where *Where) error {
 	return nil
 }
 
+func (tm *TMImpl) checkFieldNames(tb Table, fNames []string) ([]int, error) {
+	target := make([]int, 0)
+	for _, fName := range fNames {
+		tar := -1
+		for i, field := range tb.GetFields() {
+			if fName == field.GetName() {
+				tar = i
+				break
+			}
+		}
+		if tar == -1 {
+			return nil, &ErrorFieldNotExist{}
+		} else {
+			target = append(target, tar)
+		}
+	}
+	return target, nil
+}
+
 // used for select query
 func (tm *TMImpl) wrapTableResponseTitle(fName []string) []*ResponseObject {
 	rowCnt := 0
@@ -711,7 +737,7 @@ func matchWhereCondition(row Row, table Table, where *Where) bool {
 			break
 		}
 	}
-	value1 := row.GetValues()[target]
+	value1, _ := fieldValueToString(table.GetFields()[target].GetFType(), row.GetValues()[target]) // any type
 	value2 := where.Compare.Value
 	compareFunction := DefaultFieldFactory.GetCompareFunction(table.GetFields()[target].GetFType())
 	switch where.Compare.CompareTo {

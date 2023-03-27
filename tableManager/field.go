@@ -11,22 +11,27 @@ import (
 )
 
 func init() {
+	// a, b must be string
 	m := make(map[FieldType]func(any, any) int)
 	m[INT32] = func(a any, b any) int {
-		ia, ib := a.(int32), b.(int32)
-		if ia > ib {
+		ia, ib := a.(string), b.(string)
+		na, _ := strconv.Atoi(ia)
+		nb, _ := strconv.Atoi(ib)
+		if na > nb {
 			return 1
-		} else if ia == ib {
+		} else if na == nb {
 			return 0
 		} else {
 			return -1
 		}
 	}
 	m[INT64] = func(a any, b any) int {
-		ia, ib := a.(int64), b.(int64)
-		if ia > ib {
+		ia, ib := a.(string), b.(string)
+		na, _ := strconv.Atoi(ia)
+		nb, _ := strconv.Atoi(ib)
+		if na > nb {
 			return 1
-		} else if ia == ib {
+		} else if na == nb {
 			return 0
 		} else {
 			return -1
@@ -275,6 +280,36 @@ func fieldValueToBytes(fType FieldType, value any) ([]byte, error) {
 		}
 	}
 	return buffer.Bytes(), nil
+}
+
+func fieldValueToString(fType FieldType, value any) (string, error) {
+	switch fType {
+	case INT32:
+		{
+			if v, available := value.(int32); !available {
+				return "", &ErrorValueNotMatch{}
+			} else {
+				return strconv.FormatInt(int64(v), 10), nil
+			}
+		}
+	case INT64:
+		{
+			if v, available := value.(int64); !available {
+				return "", &ErrorValueNotMatch{}
+			} else {
+				return strconv.FormatInt(v, 10), nil
+			}
+		}
+	case STRING:
+		{
+			if s, available := value.(string); !available {
+				return "", &ErrorValueNotMatch{}
+			} else {
+				return s, nil
+			}
+		}
+	}
+	return "", &ErrorInvalidFType{}
 }
 
 func traverseStringToValue(fType FieldType, value string) (any, error) {

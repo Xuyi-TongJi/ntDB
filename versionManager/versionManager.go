@@ -119,6 +119,7 @@ func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 		// undoLog
 		rollback := v.undo.Log(record.GetRaw())
 		newRecordRaw := WrapRecordRaw(true, newData, xid, rollback)
+		log.Printf("[VERSION MANAGER LINE 122] NEW RECORD RAW %d\n", len(newRecordRaw))
 		newUid := v.dm.Update(xid, uid, newRecordRaw)
 		tran.AddUpdate(uid, newUid, record.GetRaw(), newRecordRaw)
 		return newUid, err

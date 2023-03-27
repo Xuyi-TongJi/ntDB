@@ -9,8 +9,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync/atomic"
-
 	"sync"
 )
 
@@ -18,12 +16,13 @@ type Connection struct {
 	TcpServer    iface.IServer
 	Conn         *net.TCPConn
 	ConnId       uint32
-	IsClosed     atomic.Bool
+	IsClosed     bool
 	ExitChan     chan bool
 	MessageChan  chan []byte
 	MsgHandler   iface.IMessageHandler
 	PropertyMap  map[string]interface{}
 	PropertyLock sync.RWMutex // possible to delete
+	lock         sync.Mutex   // 保护关闭过程 -> channel只能被关闭一次
 
 	// request
 	queryBuffer            []byte
@@ -111,10 +110,16 @@ func (c *Connection) Start() {
 }
 
 func (c *Connection) Stop() {
-	if c.IsClosed.Load() {
+	if c.IsClosed {
 		return
 	}
-	c.IsClosed.Store(true) // close a channel only once
+	// close a channel only once
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.IsClosed {
+		return
+	}
+	c.IsClosed = true
 	c.TcpServer.CallOnConnectionStop(c)
 	c.ExitChan <- true
 	c.TcpServer.GetConnectionManager().Remove(c)
@@ -142,7 +147,7 @@ func (c *Connection) GetClientTcpStatus() net.Addr {
 // SendMessage 将数据封包为二进制数据并发送给写协程
 func (c *Connection) SendMessage(data []byte) {
 	// 将data发送给写协程
-	if !c.IsClosed.Load() {
+	if !c.IsClosed {
 		c.MessageChan <- data
 	}
 }
@@ -170,7 +175,7 @@ func (c *Connection) RemoveConnectionProperty(key string) {
 }
 
 func (c *Connection) HasClosed() bool {
-	return c.IsClosed.Load()
+	return c.IsClosed
 }
 
 func (c *Connection) GetMsgHandler() iface.IMessageHandler {
@@ -183,7 +188,8 @@ func NewConnection(server iface.IServer, conn *net.TCPConn, id uint32, msgHandle
 		TcpServer:         server,
 		Conn:              conn,
 		ConnId:            id,
-		IsClosed:          atomic.Bool{},
+		IsClosed:          false,
+		lock:              sync.Mutex{},
 		MsgHandler:        msgHandler,
 		MessageChan:       make(chan []byte),
 		ExitChan:          make(chan bool, 1),

@@ -80,7 +80,7 @@ func (dbRouter *DbRouter) DoHandle(request iface.IRequest) {
 		dbRouter.handleError(err, request)
 	} else if response != nil && len(response) > 0 {
 		last := response[len(response)-1]
-		row, col := last.ColId+1, last.RowId+1
+		row, col := last.RowId+1, last.ColId+1
 		resMsg := make([]string, 0)
 		resMsg = append(resMsg, strconv.FormatInt(int64(row), 10))
 		resMsg = append(resMsg, strconv.FormatInt(int64(col), 10))

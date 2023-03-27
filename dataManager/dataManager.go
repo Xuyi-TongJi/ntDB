@@ -75,7 +75,7 @@ func (dm *DmImpl) Update(xid, uid int64, data []byte) int64 {
 		panic("Error occurs when updating data item, this data item is invalid")
 	}
 	oldRaw := di.GetRaw()
-	newRaw := WrapDataItemRaw(data)
+	newRaw := WrapDataItemRaw(data) // record -> dataItem
 	var ret int64
 	if len(oldRaw) >= len(newRaw) {
 		// 原地更新
@@ -96,6 +96,7 @@ func (dm *DmImpl) Update(xid, uid int64, data []byte) int64 {
 // 申请向Page Cache插入一段数据
 // log first and insert next
 // return uid(pageId, offset)
+// pageCtl的Select方法确保了对page进行Append操作的安全性
 func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 	// wrap
 	raw := WrapDataItemRaw(data)
@@ -104,7 +105,7 @@ func (dm *DmImpl) Insert(xid int64, data []byte) int64 {
 		// 暂不支持跨页存储
 		panic("Error occurs when inserting data, err = data length overflow\n")
 	}
-	// find a free page by page Ctl
+	// find a free page by page Ctl(locks)
 	pi := dm.pageCtl.Select(length)
 	var pageId int64
 	// if necessarily, create a new page
@@ -225,7 +226,6 @@ func uidTrans(uid int64) (pageId, offset int64) {
 	offset = uid & ((1 << 32) - 1)
 	uid >>= 32
 	pageId = uid & ((1 << 32) - 1)
-	log.Printf("[Data Manager] UID TRANS LOCATE AT %d %d\n", pageId, offset)
 	return
 }
 

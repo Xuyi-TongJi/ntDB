@@ -141,7 +141,6 @@ func (f *TableImplFactory) WrapTableRaw(tableName string, nextUid int64, fields 
 		_ = binary.Write(buffer, binary.BigEndian, uid)
 	}
 	_ = binary.Write(buffer, binary.BigEndian, firstRecordUid)
-	log.Printf("--------------------------------------------[TABLE LINE 143] WRAP TABLE %d\n", len(buffer.Bytes()))
 	return buffer.Bytes()
 }
 

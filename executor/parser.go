@@ -236,10 +236,6 @@ func parseQuery(grammar *Trie, entity []any, args []string) error {
 	var status *Status
 	eIndex := -1
 	var currentArgs []string
-	// for _, arg := range args {
-	// 	fmt.Printf("%s ", arg)
-	// }
-	// fmt.Println()
 	for i := 0; i < count; i++ {
 		// key word
 		upper := strings.ToUpper(args[i])
@@ -305,7 +301,7 @@ func packQueryEntity(args []string, entity any) error {
 			if upd.TName == "" {
 				upd.TName = args[0]
 			} else if upd.FName == "" {
-				upd.TName = args[0]
+				upd.FName = args[0]
 			} else {
 				upd.ToUpdate = args[0]
 			}

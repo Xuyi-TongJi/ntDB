@@ -32,9 +32,9 @@ const (
 // 将每个区间拆分成64个小区间
 type PageCtlImpl struct {
 	free     [INTERVALS]*LinkedList // [32,127], [127,255]... (链表)
-	tiny     *SkipList              // 剩余空间<32Bytes且>=8的页(跳表)
-	tinyLock sync.Mutex
 	locks    [INTERVALS]sync.Mutex
+	tiny     *SkipList // 剩余空间<32Bytes且>=8的页(跳表)
+	tinyLock sync.Mutex
 	pc       PageCache
 }
 
