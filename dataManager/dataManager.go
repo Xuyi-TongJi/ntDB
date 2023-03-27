@@ -9,7 +9,7 @@ import (
 )
 
 // DataManager 管理PageCache(BufferPool+Data Source), Page Control, RedoLog
-// 上层请求必须保证请求的长度八字节对齐
+// 释放page：Read操作在上层释放(需要把DI返回给上层)，Update，Insert，Delete操作在本层释放
 
 const PageNumberDbMeta int64 = 1
 
@@ -74,6 +74,7 @@ func (dm *DmImpl) Update(xid, uid int64, data []byte) int64 {
 	if di == nil {
 		panic("Error occurs when updating data item, this data item is invalid")
 	}
+	defer di.Release()
 	oldRaw := di.GetRaw()
 	newRaw := WrapDataItemRaw(data) // record -> dataItem
 	var ret int64
@@ -147,6 +148,7 @@ func (dm *DmImpl) Release(di DataItem) {
 func (dm *DmImpl) Delete(xid, uid int64) {
 	di := dm.Read(uid)
 	if di != nil {
+		defer di.Release()
 		// LOG FIRST
 		oldRaw := di.GetRaw()
 		newRaw := make([]byte, len(oldRaw))

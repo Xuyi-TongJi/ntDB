@@ -171,6 +171,22 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 			if err != nil {
 				return err
 			}
+			if tb.GetFirstRecordUid() != 0 {
+				// update
+				rc, err := tm.vm.ReadForUpdate(xid, tb.GetFirstRecordUid(), tb.GetUid())
+				if err != nil {
+					return err
+				}
+				oldFirstRow := DefaultRowFactory.NewRow(tb.GetFirstRecordUid(), tb, rc.GetData())
+				oldFirstRaw, err := WrapRowRaw(tb, RECORD, uid, oldFirstRow.GetNextUid(), oldFirstRow.GetValues())
+				if err != nil {
+					return err
+				}
+				newOldFirstUid, err := tm.vm.Update(xid, tb.GetFirstRecordUid(), tb.GetUid(), oldFirstRaw)
+				if newOldFirstUid != tb.GetFirstRecordUid() {
+					panic("Fatal error occurs when updating record row")
+				}
+			}
 			newTableRaw := DefaultTableFactory.WrapTableRaw(insert.TbName, tb.GetNextUid(), tb.GetFields(), uid, tb.GetPrimaryKey()+1)
 			// 当前事物一定已经获取表锁, 这个Update和上面的Insert一定是原子的
 			newUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTableRaw)
@@ -256,8 +272,6 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 	if record := tm.vm.Read(xid, uid); record == nil {
 		return &ErrorTableNotExist{}
 	} else {
-		log.Printf("[TABLE MANAGER LINE 259] NEW RECORD RAW %d\n", len(record.GetRaw()))
-		log.Printf("[TABLE MANAGER LINE 260] OLD TABEL RAW LENGTH %d", len(record.GetData()))
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
 		// check update valid
 		var target = -1
@@ -333,12 +347,10 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 						} else {
 							// rewrite the table
 							tableRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
-							log.Printf("[TABLE MANAGER LINE 335] NEW TABEL RAW LENGTH %d", len(tableRaw))
 							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
 							if newTableUid != tb.GetUid() {
 								panic("Fatal Error occurs when updating table metadata raw")
 							}
-							log.Printf("%d %d\n", newTableUid, tb.GetUid())
 							if err != nil {
 								tm.Abort(xid)
 								return err
@@ -395,10 +407,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 			}
 		} else {
 			// delete all
-			if err := tm.deleteAll(xid, tb); err != nil {
-				tm.Abort(xid)
-				return err
-			}
+			return tm.deleteAll(xid, tb)
 		}
 		rUid := tb.GetFirstRecordUid()
 		for rUid != 0 {
@@ -451,7 +460,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 					}
 					nextRaw := nextRecord.GetData()
 					nextRow := DefaultRowFactory.NewRow(row.GetNextUid(), tb, nextRaw)
-					raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), nextRow.GetValues())
+					raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), nextRow.GetNextUid(), nextRow.GetValues())
 					if err != nil {
 						tm.Abort(xid)
 						return err
@@ -477,10 +486,6 @@ func (tm *TMImpl) loadField(tb Table, uid int64) Field {
 	}
 	// RECORD
 	// [ROLLBACK]8[XID]8[Data length]8[DATA]
-
-	xid := record.GetXid()
-	log.Printf("[TABLE MANAGER LINE 464] LOAD FIELD CREATED BY XID = %d\n", xid)
-
 	data := record.GetData()
 	// [DATA] -> of field meta data
 	return DefaultFieldFactory.NewField(tb, uid, data, tm.im)
