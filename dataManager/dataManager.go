@@ -235,7 +235,7 @@ func getUid(pageId, offset int64) int64 {
 
 func OpenDataManager(path string, memory int64, tm TransactionManager) DataManager {
 	pc := NewPageCacheRefCountFileSystemImpl(uint32(memory/PageSize), path, &sync.Mutex{})
-	pageCtl := NewPageCtl(&sync.Mutex{}, pc)
+	pageCtl := NewPageCtl(pc)
 	redo := OpenRedoLog(path, &sync.Mutex{})
 	dm := &DmImpl{
 		pageCache:          pc,

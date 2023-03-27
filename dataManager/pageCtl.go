@@ -31,14 +31,14 @@ const (
 // PageCtlImpl
 // 将每个区间拆分成64个小区间
 type PageCtlImpl struct {
-	free    [INTERVALS]*LinkedList // [32,127], [127,255]... (链表)
-	tiny    *SkipList              // 剩余空间<32Bytes且>=8的页(跳表)
-	dirties *LinkedList            // TODO 需要刷盘的脏页
-	lock    *sync.Mutex
-	pc      PageCache
+	free     [INTERVALS]*LinkedList // [32,127], [127,255]... (链表)
+	tiny     *SkipList              // 剩余空间<32Bytes且>=8的页(跳表)
+	tinyLock sync.Mutex
+	locks    [INTERVALS]sync.Mutex
+	pc       PageCache
 }
 
-func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
+func NewPageCtl(pc PageCache) PageCtl {
 	var pi [INTERVALS]*LinkedList
 	f := func(a any, b any) int {
 		x, y := a.(*PageInfo).Available, b.(*PageInfo).Available
@@ -53,7 +53,7 @@ func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
 	for i := int64(0); i < INTERVALS; i++ {
 		pi[i] = NewLinkedList(f)
 	}
-	ctl := &PageCtlImpl{free: pi, tiny: NewSkipList(f), dirties: NewLinkedList(f), lock: lock, pc: pc}
+	ctl := &PageCtlImpl{free: pi, tiny: NewSkipList(f), pc: pc}
 	return ctl
 }
 
@@ -61,8 +61,6 @@ func NewPageCtl(lock *sync.Mutex, pc PageCache) PageCtl {
 // 为need字节空间选择合适的页并删除
 // Select and remove 操作必须是原子的
 func (pi *PageCtlImpl) Select(need int64) *PageInfo {
-	pi.lock.Lock()
-	defer pi.lock.Unlock()
 	if need <= 0 {
 		panic("Illegal page cache application operation\n")
 	}
@@ -84,21 +82,33 @@ func (pi *PageCtlImpl) Select(need int64) *PageInfo {
 	if intervalNum != INTERVALS-1 {
 		intervalNum += 1
 	}
-	toFind := &PageInfo{-1, need}
 	for ; intervalNum < INTERVALS; intervalNum += 1 {
-		if result := pi.free[intervalNum].FindGtAndRemove(toFind); result != nil {
-			return result.(*PageInfo)
+		if result := pi.selectAndRemove(need, intervalNum); result != nil {
+			return result
 		}
 	}
 	return nil
 }
 
 func (pi *PageCtlImpl) selectTinyFast(need int64) *PageInfo {
+	pi.tinyLock.Lock()
+	defer pi.tinyLock.Unlock()
 	if need < TinyTHRESHOLD {
 		result := pi.tiny.BinarySearch(&PageInfo{-1, need})
 		if result != nil {
+			pi.tiny.Remove(result)
 			return result.(*PageInfo)
 		}
+	}
+	return nil
+}
+
+func (pi *PageCtlImpl) selectAndRemove(need, intervalId int64) *PageInfo {
+	pi.locks[intervalId].Lock()
+	defer pi.locks[intervalId].Unlock()
+	toFind := &PageInfo{-1, need}
+	if result := pi.free[intervalId].FindGtAndRemove(toFind); result != nil {
+		return result.(*PageInfo)
 	}
 	return nil
 }
@@ -109,12 +119,14 @@ func (pi *PageCtlImpl) AddPageInfo(pageId int64, available int64) {
 	if available < OMITTED {
 		return
 	}
-	pi.lock.Lock()
-	defer pi.lock.Unlock()
 	if available < TinyTHRESHOLD {
+		pi.tinyLock.Lock()
+		defer pi.tinyLock.Unlock()
 		pi.tiny.Add(&PageInfo{pageId, available})
 	} else {
 		intervalId := available / THRESHOLD
+		pi.locks[intervalId].Lock()
+		defer pi.locks[intervalId].Unlock()
 		pi.free[intervalId].AddLast(&PageInfo{pageId, available})
 	}
 }
