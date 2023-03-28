@@ -57,6 +57,7 @@ func (undo *UndoLog) Log(data []byte) int64 {
 	} else {
 		undo.offset += int64(n)
 	}
+	_ = undo.file.Sync()
 	return ret
 }
 

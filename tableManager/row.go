@@ -69,6 +69,7 @@ const (
 
 type RowFactory interface {
 	NewRow(uid int64, tb Table, raw []byte) Row
+	WrapRowRaw(tb Table, rType RowType, prevRowUid, nextRowUid int64, values []any) ([]byte, error)
 }
 
 var DefaultRowFactory RowFactory
@@ -109,7 +110,7 @@ func (r *RowImplFactory) NewRow(uid int64, tb Table, raw []byte) Row {
 	}
 }
 
-func WrapRowRaw(tb Table, rType RowType, prevRowUid, nextRowUid int64, values []any) ([]byte, error) {
+func (r *RowImplFactory) WrapRowRaw(tb Table, rType RowType, prevRowUid, nextRowUid int64, values []any) ([]byte, error) {
 	buffer := bytes.NewBuffer([]byte{})
 	_ = binary.Write(buffer, binary.BigEndian, rType)
 	_ = binary.Write(buffer, binary.BigEndian, prevRowUid)

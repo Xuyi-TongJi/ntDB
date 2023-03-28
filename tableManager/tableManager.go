@@ -164,7 +164,7 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 				values[i+1] = ret
 			}
 		}
-		if raw, err := WrapRowRaw(tb, RECORD, int64(0), tb.GetFirstRecordUid(), values); err != nil {
+		if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, int64(0), tb.GetFirstRecordUid(), values); err != nil {
 			return err
 		} else {
 			uid, err := tm.vm.Insert(xid, raw, tb.GetUid())
@@ -178,7 +178,7 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 					return err
 				}
 				oldFirstRow := DefaultRowFactory.NewRow(tb.GetFirstRecordUid(), tb, rc.GetData())
-				oldFirstRaw, err := WrapRowRaw(tb, RECORD, uid, oldFirstRow.GetNextUid(), oldFirstRow.GetValues())
+				oldFirstRaw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, uid, oldFirstRow.GetNextUid(), oldFirstRow.GetValues())
 				if err != nil {
 					return err
 				}
@@ -308,7 +308,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
 			if matchWhereCondition(row, tb, update.Where) {
 				row.GetValues()[target] = value // any value
-				if raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), row.GetValues()); err != nil {
+				if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), row.GetValues()); err != nil {
 					tm.Abort(xid)
 					return err
 				} else {
@@ -331,7 +331,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 							}
 							previousRowRaw := rec.GetData()
 							row := DefaultRowFactory.NewRow(prevUid, tb, previousRowRaw)
-							if raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), newUid, row.GetValues()); err != nil {
+							if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), newUid, row.GetValues()); err != nil {
 								tm.Abort(xid)
 								return err
 							} else {
@@ -366,7 +366,7 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 							}
 							nextRowRaw := rec.GetData()
 							row := DefaultRowFactory.NewRow(nextUid, tb, nextRowRaw)
-							if raw, err := WrapRowRaw(tb, RECORD, newUid, row.GetNextUid(), row.GetValues()); err != nil {
+							if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, newUid, row.GetNextUid(), row.GetValues()); err != nil {
 								tm.Abort(xid)
 								return err
 							} else {
@@ -440,7 +440,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 					}
 					prevRaw := prevRecord.GetData()
 					prevRow := DefaultRowFactory.NewRow(row.GetPrevUid(), tb, prevRaw)
-					raw, err := WrapRowRaw(tb, RECORD, prevRow.GetPrevUid(), row.GetNextUid(), prevRow.GetValues())
+					raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, prevRow.GetPrevUid(), row.GetNextUid(), prevRow.GetValues())
 					if err != nil {
 						tm.Abort(xid)
 						return err
@@ -460,7 +460,7 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 					}
 					nextRaw := nextRecord.GetData()
 					nextRow := DefaultRowFactory.NewRow(row.GetNextUid(), tb, nextRaw)
-					raw, err := WrapRowRaw(tb, RECORD, row.GetPrevUid(), nextRow.GetNextUid(), nextRow.GetValues())
+					raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), nextRow.GetNextUid(), nextRow.GetValues())
 					if err != nil {
 						tm.Abort(xid)
 						return err
