@@ -82,6 +82,7 @@ func (redo *RedoLog) log(data []byte) {
 	}
 	dataLen := int64(binary.BigEndian.Uint32(logWrap[:SzData]))
 	tmp := make([]byte, SzCheckSum)
+	_, _ = redo.file.ReadAt(tmp, 0)
 	log.Printf("[REDO LOG LINE 80] Log a new redo log, current checkSum = %d, %d, dataLength = %d\n", nextCheckSum, int64(binary.BigEndian.Uint64(tmp)), dataLen) // PACK
 	_ = redo.file.Sync()
 	read := make([]byte, SzData)

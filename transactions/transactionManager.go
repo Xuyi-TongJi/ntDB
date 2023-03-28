@@ -147,6 +147,7 @@ func (t *TransactionManagerImpl) initXidFile() {
 	if _, err := t.file.Write(bytesBuffer.Bytes()); err != nil {
 		panic(err)
 	}
+	_ = t.file.Sync()
 }
 
 // 获得xid事物状态信息在xid文件中的偏移量
@@ -162,6 +163,7 @@ func (t *TransactionManagerImpl) updateXidStatus(xid int64, status byte) {
 	if _, err := t.file.WriteAt(buf, offset); err != nil {
 		panic(err)
 	}
+	_ = t.file.Sync()
 }
 
 func (t *TransactionManagerImpl) increaseXidCounter() {
@@ -174,4 +176,5 @@ func (t *TransactionManagerImpl) increaseXidCounter() {
 	if _, err := t.file.WriteAt(bytesBuffer.Bytes(), 0); err != nil {
 		panic(err)
 	}
+	_ = t.file.Sync()
 }

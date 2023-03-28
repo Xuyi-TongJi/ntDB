@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"myDB/dataManager"
-	"myDB/debug"
 	"myDB/transactions"
 	"sync"
 )
@@ -62,8 +61,6 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 		}
 	}
 	di := v.dm.ReadSnapShot(uid) // DataItem
-	pg, of := debug.UidTrans(uid)
-	log.Printf("[VERSION MANAGER LINE 65] READING DATAITEM %d %d\n", pg, of)
 	if di == nil {
 		return nil
 	}
@@ -119,7 +116,6 @@ func (v *VmImpl) Update(xid, uid, tbUid int64, newData []byte) (int64, error) {
 		// undoLog
 		rollback := v.undo.Log(record.GetRaw())
 		newRecordRaw := WrapRecordRaw(true, newData, xid, rollback)
-		log.Printf("[VERSION MANAGER LINE 122] NEW RECORD RAW %d\n", len(newRecordRaw))
 		newUid := v.dm.Update(xid, uid, newRecordRaw)
 		tran.AddUpdate(uid, newUid, record.GetRaw(), newRecordRaw)
 		return newUid, err
@@ -140,16 +136,12 @@ func (v *VmImpl) Insert(xid int64, data []byte, tbUid int64) (int64, error) {
 	raw := WrapRecordRaw(true, data, xid, 0)
 	if tbUid == MetaDataTbUid {
 		uid := v.dm.Insert(xid, raw)
-		pg, of := debug.UidTrans(uid)
-		log.Printf("[VERSION MANAGER LINE 139] Transaction %d INSERT FINISHED, INSERT AT %d %d, length = %d\n", xid, pg, of, len(data))
 		return uid, nil
 	}
 	if err := v.tryToLockTable(xid, tbUid); err != nil {
 		return -1, err
 	}
 	uid := v.dm.Insert(xid, raw)
-	pg, of := debug.UidTrans(uid)
-	log.Printf("[VERSION MANAGER LINE 148] Transaction %d INSERT FINISHED, INSERT AT %d %d, length = %d\n", xid, pg, of, len(data))
 	tran.AddInsert(uid)
 	// 插入的是表元数据，xid获得uid的锁, must success
 	if tbUid == MetaDataTbUid {
@@ -210,7 +202,6 @@ func (v *VmImpl) Begin() int64 {
 		v.nextXid = xid + 1
 	}
 	v.activeTrans[xid] = trans
-	log.Printf("[VERSION MANAGER LINE 205] Transaction %d BEGIN \n", xid)
 	return xid
 }
 
@@ -228,7 +219,6 @@ func (v *VmImpl) Commit(xid int64) {
 	v.endTransaction(xid, tran)
 	// tm
 	v.tm.Commit(xid)
-	log.Printf("[VERSION MANAGER LINE 219] Transaction %d COMMITED\n", xid)
 }
 
 // Abort

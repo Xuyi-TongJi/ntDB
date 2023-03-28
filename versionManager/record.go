@@ -3,7 +3,6 @@ package versionManager
 import (
 	"bytes"
 	"encoding/binary"
-	"log"
 	"myDB/dataManager"
 )
 
@@ -164,7 +163,6 @@ func (factory *RecordImplFactory) NewSnapShot(raw []byte, undo Log) Record {
 	xid := int64(binary.BigEndian.Uint64(raw[offset : offset+SzRcXid]))
 	offset += SzRcXid
 	data := raw[offset:]
-	log.Printf("[RECORD LINE 167] CREATE SNAP SHOT %d %d %d\n", raw[0], xid, len(data))
 	return &SnapShot{
 		valid:    valid,
 		rollback: rollback,

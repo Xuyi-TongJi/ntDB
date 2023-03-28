@@ -31,7 +31,6 @@ type UndoLog struct {
 }
 
 func (undo *UndoLog) Read(offset int64) []byte {
-	// unlocked
 	buffer := make([]byte, SzUndoData)
 	if _, err := undo.file.ReadAt(buffer, offset); err != nil {
 		panic(fmt.Sprintf("Error occurs when reading data, err = %s", err))
@@ -52,7 +51,7 @@ func (undo *UndoLog) Log(data []byte) int64 {
 	defer undo.lock.Unlock()
 	ret := undo.offset
 	raw := wrapUndoLog(data)
-	if n, err := undo.file.Write(raw); err != nil {
+	if n, err := undo.file.WriteAt(raw, undo.offset); err != nil {
 		panic(fmt.Sprintf("Error occurs when logging undo log, err = %s", err))
 	} else {
 		undo.offset += int64(n)
