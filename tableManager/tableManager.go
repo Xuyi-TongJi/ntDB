@@ -140,8 +140,12 @@ func (tm *TMImpl) Insert(xid int64, insert *Insert) error {
 	if uid, err := tm.getTbUid(insert.TbName); err != nil {
 		return err
 	} else {
-		record := tm.vm.Read(xid, uid)
+		record, err := tm.vm.ReadForUpdate(xid, uid, uid) // locks table
+		if err != nil {
+			return err
+		}
 		if record == nil {
+			// never happened
 			return &ErrorTableNotExist{}
 		}
 		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
@@ -269,122 +273,125 @@ func (tm *TMImpl) Update(xid int64, update *Update) error {
 	if err != nil {
 		return err
 	}
-	if record := tm.vm.Read(xid, uid); record == nil {
+	record, err := tm.vm.ReadForUpdate(xid, uid, uid) // locks table
+	if record == nil {
 		return &ErrorTableNotExist{}
-	} else {
-		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
-		// check update valid
-		var target = -1
-		for i, field := range tb.GetFields() {
-			if field.GetName() == update.FName {
-				target = i
-				break
-			}
+	}
+	if err != nil {
+		return err
+	}
+	tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
+	// check update valid
+	var target = -1
+	for i, field := range tb.GetFields() {
+		if field.GetName() == update.FName {
+			target = i
+			break
 		}
-		if target == -1 {
-			return &ErrorInvalidFieldName{}
-		}
-		if err != nil {
+	}
+	if target == -1 {
+		return &ErrorInvalidFieldName{}
+	}
+	if err != nil {
+		return err
+	}
+	// check where
+	if update.Where != nil && update.Where.Compare != nil {
+		if err := tm.checkWhereCondition(tb, update.Where); err != nil {
 			return err
 		}
-		// check where
-		if update.Where != nil && update.Where.Compare != nil {
-			if err := tm.checkWhereCondition(tb, update.Where); err != nil {
-				return err
-			}
-		}
-		rUid := tb.GetFirstRecordUid()
-		// check toUpdate match field type
-		value, err := traverseStringToValue(tb.GetFields()[target].GetFType(), update.ToUpdate)
+	}
+	rUid := tb.GetFirstRecordUid()
+	// check toUpdate match field type
+	value, err := traverseStringToValue(tb.GetFields()[target].GetFType(), update.ToUpdate)
+	if err != nil {
+		return err
+	}
+	for rUid != 0 {
+		record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
 		if err != nil {
+			tm.Abort(xid)
 			return err
 		}
-		for rUid != 0 {
-			record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
-			if err != nil {
+		row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
+		if matchWhereCondition(row, tb, update.Where) {
+			row.GetValues()[target] = value // any value
+			if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), row.GetValues()); err != nil {
 				tm.Abort(xid)
 				return err
-			}
-			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
-			if matchWhereCondition(row, tb, update.Where) {
-				row.GetValues()[target] = value // any value
-				if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), row.GetNextUid(), row.GetValues()); err != nil {
+			} else {
+				newUid, err := tm.vm.Update(xid, row.GetUid(), tb.GetUid(), raw)
+				if err != nil {
 					tm.Abort(xid)
 					return err
-				} else {
-					newUid, err := tm.vm.Update(xid, row.GetUid(), tb.GetUid(), raw)
-					if err != nil {
-						tm.Abort(xid)
-						return err
-					}
-					// uid change
-					if newUid != row.GetUid() {
-						prevUid := row.GetPrevUid()
-						nextUid := row.GetNextUid()
-						// modify prev
-						if prevUid != 0 {
-							// rewrite the previous row
-							rec, err := tm.vm.ReadForUpdate(xid, prevUid, tb.GetUid())
-							if err != nil {
-								tm.Abort(xid)
-								return err
-							}
-							previousRowRaw := rec.GetData()
-							row := DefaultRowFactory.NewRow(prevUid, tb, previousRowRaw)
-							if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), newUid, row.GetValues()); err != nil {
-								tm.Abort(xid)
-								return err
-							} else {
-								newPrevUid, err := tm.vm.Update(xid, prevUid, tb.GetUid(), raw)
-								if newPrevUid != prevUid {
-									panic("Fatal Error occurs when updating record raw")
-								}
-								if err != nil {
-									tm.Abort(xid)
-									return err
-								}
-							}
+				}
+				// uid change
+				if newUid != row.GetUid() {
+					prevUid := row.GetPrevUid()
+					nextUid := row.GetNextUid()
+					// modify prev
+					if prevUid != 0 {
+						// rewrite the previous row
+						rec, err := tm.vm.ReadForUpdate(xid, prevUid, tb.GetUid())
+						if err != nil {
+							tm.Abort(xid)
+							return err
+						}
+						previousRowRaw := rec.GetData()
+						row := DefaultRowFactory.NewRow(prevUid, tb, previousRowRaw)
+						if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), newUid, row.GetValues()); err != nil {
+							tm.Abort(xid)
+							return err
 						} else {
-							// rewrite the table
-							tableRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
-							newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
-							if newTableUid != tb.GetUid() {
-								panic("Fatal Error occurs when updating table metadata raw")
+							newPrevUid, err := tm.vm.Update(xid, prevUid, tb.GetUid(), raw)
+							if newPrevUid != prevUid {
+								panic("Fatal Error occurs when updating record raw")
 							}
 							if err != nil {
 								tm.Abort(xid)
 								return err
 							}
 						}
-						// modify next
-						if nextUid != 0 {
-							// rewrite the next row
-							rec, err := tm.vm.ReadForUpdate(xid, nextUid, tb.GetUid())
+					} else {
+						// rewrite the table
+						tableRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), newUid, tb.GetPrimaryKey())
+						newTableUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), tableRaw)
+						if newTableUid != tb.GetUid() {
+							panic("Fatal Error occurs when updating table metadata raw")
+						}
+						if err != nil {
+							tm.Abort(xid)
+							return err
+						}
+					}
+					// modify next
+					if nextUid != 0 {
+						// rewrite the next row
+						rec, err := tm.vm.ReadForUpdate(xid, nextUid, tb.GetUid())
+						if err != nil {
+							tm.Abort(xid)
+							return err
+						}
+						nextRowRaw := rec.GetData()
+						row := DefaultRowFactory.NewRow(nextUid, tb, nextRowRaw)
+						if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, newUid, row.GetNextUid(), row.GetValues()); err != nil {
+							tm.Abort(xid)
+							return err
+						} else {
+							newNextUid, err := tm.vm.Update(xid, nextUid, tb.GetUid(), raw)
+							if newNextUid != nextUid {
+								panic("Fatal Error occurs when updating record raw")
+							}
 							if err != nil {
 								tm.Abort(xid)
 								return err
-							}
-							nextRowRaw := rec.GetData()
-							row := DefaultRowFactory.NewRow(nextUid, tb, nextRowRaw)
-							if raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, newUid, row.GetNextUid(), row.GetValues()); err != nil {
-								tm.Abort(xid)
-								return err
-							} else {
-								newNextUid, err := tm.vm.Update(xid, nextUid, tb.GetUid(), raw)
-								if newNextUid != nextUid {
-									panic("Fatal Error occurs when updating record raw")
-								}
-								if err != nil {
-									tm.Abort(xid)
-									return err
-								}
 							}
 						}
 					}
 				}
 			}
-			rUid = row.GetNextUid()
 		}
+		rUid = row.GetNextUid()
 	}
 	return nil
 }
@@ -396,85 +403,88 @@ func (tm *TMImpl) Delete(xid int64, delete *Delete) error {
 	if err != nil {
 		return err
 	}
-	if record := tm.vm.Read(xid, uid); record == nil {
+	record, err := tm.vm.ReadForUpdate(xid, uid, uid)
+	if record == nil {
 		return &ErrorTableNotExist{}
-	} else {
-		tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
-		// check where
-		if delete.Where != nil && delete.Where.Compare != nil {
-			if err := tm.checkWhereCondition(tb, delete.Where); err != nil {
-				return err
-			}
-		} else {
-			// delete all
-			return tm.deleteAll(xid, tb)
+	}
+	if err != nil {
+		return err
+	}
+	tb := DefaultTableFactory.NewTable(uid, record.GetData(), tm)
+	// check where
+	if delete.Where != nil && delete.Where.Compare != nil {
+		if err := tm.checkWhereCondition(tb, delete.Where); err != nil {
+			return err
 		}
-		rUid := tb.GetFirstRecordUid()
-		for rUid != 0 {
-			record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
-			if err != nil {
+	} else {
+		// delete all
+		return tm.deleteAll(xid, tb)
+	}
+	rUid := tb.GetFirstRecordUid()
+	for rUid != 0 {
+		record, err := tm.vm.ReadForUpdate(xid, rUid, tb.GetUid())
+		if err != nil {
+			tm.Abort(xid)
+			return err
+		}
+		row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
+		if matchWhereCondition(row, tb, delete.Where) {
+			if err := tm.vm.Delete(xid, row.GetUid(), tb.GetUid()); err != nil {
 				tm.Abort(xid)
 				return err
 			}
-			row := DefaultRowFactory.NewRow(rUid, tb, record.GetData())
-			if matchWhereCondition(row, tb, delete.Where) {
-				if err := tm.vm.Delete(xid, row.GetUid(), tb.GetUid()); err != nil {
+			if row.GetPrevUid() == 0 {
+				// update table
+				newTbRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid(), tb.GetPrimaryKey())
+				if newTbUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
+					tm.Abort(xid)
+					return err
+				} else if newTbUid != tb.GetUid() {
+					panic("Fatal Error occurs when updating table metadata raw")
+				}
+			} else {
+				// update previous
+				prevRecord, err := tm.vm.ReadForUpdate(xid, row.GetPrevUid(), tb.GetUid())
+				if err != nil {
 					tm.Abort(xid)
 					return err
 				}
-				if row.GetPrevUid() == 0 {
-					// update table
-					newTbRaw := DefaultTableFactory.WrapTableRaw(tb.GetName(), tb.GetNextUid(), tb.GetFields(), row.GetNextUid(), tb.GetPrimaryKey())
-					if newTbUid, err := tm.vm.Update(xid, tb.GetUid(), tb.GetUid(), newTbRaw); err != nil {
-						tm.Abort(xid)
-						return err
-					} else if newTbUid != tb.GetUid() {
-						panic("Fatal Error occurs when updating table metadata raw")
-					}
-				} else {
-					// update previous
-					prevRecord, err := tm.vm.ReadForUpdate(xid, row.GetPrevUid(), tb.GetUid())
-					if err != nil {
-						tm.Abort(xid)
-						return err
-					}
-					prevRaw := prevRecord.GetData()
-					prevRow := DefaultRowFactory.NewRow(row.GetPrevUid(), tb, prevRaw)
-					raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, prevRow.GetPrevUid(), row.GetNextUid(), prevRow.GetValues())
-					if err != nil {
-						tm.Abort(xid)
-						return err
-					}
-					prevUid, err := tm.vm.Update(xid, prevRow.GetUid(), tb.GetUid(), raw)
-					if prevUid != row.GetPrevUid() {
-						panic("Fatal Error occurs when updating record raw")
-					} else if err != nil {
-						panic(fmt.Sprintf("Error occurs whne updating record raw, err = %s", err))
-					}
+				prevRaw := prevRecord.GetData()
+				prevRow := DefaultRowFactory.NewRow(row.GetPrevUid(), tb, prevRaw)
+				raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, prevRow.GetPrevUid(), row.GetNextUid(), prevRow.GetValues())
+				if err != nil {
+					tm.Abort(xid)
+					return err
 				}
-				if row.GetNextUid() != 0 {
-					nextRecord, err := tm.vm.ReadForUpdate(xid, row.GetNextUid(), tb.GetUid())
-					if err != nil {
-						tm.Abort(xid)
-						return err
-					}
-					nextRaw := nextRecord.GetData()
-					nextRow := DefaultRowFactory.NewRow(row.GetNextUid(), tb, nextRaw)
-					raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), nextRow.GetNextUid(), nextRow.GetValues())
-					if err != nil {
-						tm.Abort(xid)
-						return err
-					}
-					nextUid, err := tm.vm.Update(xid, nextRow.GetUid(), tb.GetUid(), raw)
-					if nextUid != row.GetNextUid() {
-						panic("Fatal Error occurs when updating record raw")
-					} else if err != nil {
-						panic(fmt.Sprintf("Error occurs when updating record raw, err = %s", err))
-					}
+				prevUid, err := tm.vm.Update(xid, prevRow.GetUid(), tb.GetUid(), raw)
+				if prevUid != row.GetPrevUid() {
+					panic("Fatal Error occurs when updating record raw")
+				} else if err != nil {
+					panic(fmt.Sprintf("Error occurs whne updating record raw, err = %s", err))
 				}
 			}
-			rUid = row.GetNextUid()
+			if row.GetNextUid() != 0 {
+				nextRecord, err := tm.vm.ReadForUpdate(xid, row.GetNextUid(), tb.GetUid())
+				if err != nil {
+					tm.Abort(xid)
+					return err
+				}
+				nextRaw := nextRecord.GetData()
+				nextRow := DefaultRowFactory.NewRow(row.GetNextUid(), tb, nextRaw)
+				raw, err := DefaultRowFactory.WrapRowRaw(tb, RECORD, row.GetPrevUid(), nextRow.GetNextUid(), nextRow.GetValues())
+				if err != nil {
+					tm.Abort(xid)
+					return err
+				}
+				nextUid, err := tm.vm.Update(xid, nextRow.GetUid(), tb.GetUid(), raw)
+				if nextUid != row.GetNextUid() {
+					panic("Fatal Error occurs when updating record raw")
+				} else if err != nil {
+					panic(fmt.Sprintf("Error occurs when updating record raw, err = %s", err))
+				}
+			}
 		}
+		rUid = row.GetNextUid()
 	}
 	return nil
 }
