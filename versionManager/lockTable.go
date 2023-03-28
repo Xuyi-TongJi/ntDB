@@ -110,7 +110,7 @@ func (lt *LockTableImpl) checkDeadLock() bool {
 			}
 		}
 	}
-	return cnt == len(all)
+	return cnt != len(all)
 }
 
 func (lt *LockTableImpl) alreadyOwnLock(xid, tbUid int64) bool {
