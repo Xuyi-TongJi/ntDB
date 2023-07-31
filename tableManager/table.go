@@ -3,7 +3,6 @@ package tableManager
 import (
 	"bytes"
 	"encoding/binary"
-	"log"
 )
 
 func init() {
@@ -14,10 +13,10 @@ func init() {
 
 type Table interface {
 	GetName() string
-	GetNextUid() int64
-	GetUid() int64 // 表的uid(存储位置)
-	GetFields() []Field
-	GetFirstRecordUid() int64
+	GetNextUid() int64        // 下一张表的tbUid
+	GetUid() int64            // 表的uid(metaData存储位置)
+	GetFields() []Field       // 表的所有字段
+	GetFirstRecordUid() int64 // 表的第一条记录的存储位置
 	GetPrimaryKey() int64
 }
 
@@ -90,7 +89,6 @@ type TableImplFactory struct{}
 // 当raw不是一个有效的Table字段时，panic
 func (f *TableImplFactory) NewTable(uid int64, raw []byte, tm TableManager) Table {
 	// check if this is a table
-	log.Printf("[TABLE LINE 93] WRAP TABLE %s\n", raw)
 	mask := int32(binary.BigEndian.Uint32(raw[:SzMask]))
 	if mask != TableMask {
 		panic("Error occurs when creating a table struct, it is not a valid table raw")

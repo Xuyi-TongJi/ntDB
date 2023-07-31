@@ -4,6 +4,7 @@ import (
 	"log"
 	"myDB/tableManager"
 	"myDB/versionManager"
+	"strconv"
 	"sync"
 )
 
@@ -15,10 +16,10 @@ type StorageEngine interface {
 	Show(xid int64) ([]*tableManager.ResponseObject, error) // 展示DB中的所有表
 	Create(xid int64, create *tableManager.Create) error    // create table
 
-	Insert(xid int64, insert *tableManager.Insert) error                                // insert
-	Select(xid int64, sel *tableManager.Select) ([]*tableManager.ResponseObject, error) // select
-	Update(xid int64, update *tableManager.Update) error                                // update fields
-	Delete(xid int64, delete *tableManager.Delete) error
+	Insert(xid int64, insert *tableManager.Insert) ([]*tableManager.ResponseObject, error) // insert
+	Select(xid int64, sel *tableManager.Select) ([]*tableManager.ResponseObject, error)    // select
+	Update(xid int64, update *tableManager.Update) ([]*tableManager.ResponseObject, error) // update fields
+	Delete(xid int64, delete *tableManager.Delete) ([]*tableManager.ResponseObject, error)
 }
 
 type NtStorageEngine struct {
@@ -28,6 +29,12 @@ type NtStorageEngine struct {
 type ErrorInvalidParameter struct{}
 type ErrorModifyPrimaryKey struct{}
 type ErrorRepetitiveField struct{}
+
+var zeroResponseObjectSlice = []*tableManager.ResponseObject{
+	{
+		Payload: strconv.Itoa(0), ColId: 0, RowId: 0,
+	},
+}
 
 func (err *ErrorInvalidParameter) Error() string {
 	return "query with invalid parameters"
@@ -82,11 +89,12 @@ func (se *NtStorageEngine) Create(xid int64, create *tableManager.Create) error 
 	return se.tm.Create(xid, create)
 }
 
-func (se *NtStorageEngine) Insert(xid int64, insert *tableManager.Insert) error {
+func (se *NtStorageEngine) Insert(xid int64, insert *tableManager.Insert) ([]*tableManager.ResponseObject, error) {
 	if insert == nil || insert.TbName == "" || insert.Values == nil {
-		return &ErrorInvalidParameter{}
+		return zeroResponseObjectSlice, &ErrorInvalidParameter{}
 	}
-	return se.tm.Insert(xid, insert)
+	change, err := se.tm.Insert(xid, insert)
+	return []*tableManager.ResponseObject{wrapChangeToResponseObject(change)}, err
 }
 
 func (se *NtStorageEngine) Select(xid int64, sel *tableManager.Select) ([]*tableManager.ResponseObject, error) {
@@ -96,22 +104,33 @@ func (se *NtStorageEngine) Select(xid int64, sel *tableManager.Select) ([]*table
 	return se.tm.Read(xid, sel)
 }
 
-func (se *NtStorageEngine) Update(xid int64, update *tableManager.Update) error {
+func (se *NtStorageEngine) Update(xid int64, update *tableManager.Update) ([]*tableManager.ResponseObject, error) {
 	// 不可以修改主键字段的值
 	if update == nil || update.ToUpdate == "" || update.FName == "" || update.TName == "" {
-		return &ErrorInvalidParameter{}
+		return zeroResponseObjectSlice, &ErrorInvalidParameter{}
 	}
 	if update.FName == tableManager.PrimaryKeyCol {
-		return &ErrorInvalidParameter{}
+		return zeroResponseObjectSlice, &ErrorInvalidParameter{}
 	}
-	return se.tm.Update(xid, update)
+	change, err := se.tm.Update(xid, update)
+	return []*tableManager.ResponseObject{wrapChangeToResponseObject(change)}, err
 }
 
-func (se *NtStorageEngine) Delete(xid int64, delete *tableManager.Delete) error {
+func (se *NtStorageEngine) Delete(xid int64, delete *tableManager.Delete) ([]*tableManager.ResponseObject, error) {
 	if delete == nil || delete.TName == "" {
-		return &ErrorInvalidParameter{}
+		return zeroResponseObjectSlice, &ErrorInvalidParameter{}
 	}
-	return se.tm.Delete(xid, delete)
+	change, err := se.tm.Delete(xid, delete)
+	return []*tableManager.ResponseObject{wrapChangeToResponseObject(change)}, err
+}
+
+// 将tableManager返回的影响行数转变为ResponseObject
+func wrapChangeToResponseObject(change int64) *tableManager.ResponseObject {
+	return &tableManager.ResponseObject{
+		Payload: strconv.Itoa(int(change)),
+		ColId:   0,
+		RowId:   0,
+	}
 }
 
 func NewStorageEngine(path string, memory int64, level versionManager.IsolationLevel) StorageEngine {

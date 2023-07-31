@@ -80,6 +80,7 @@ func (v *VmImpl) Read(xid, uid int64) Record {
 }
 
 // ReadForUpdate
+// xid->事务id, uid->需要读取的uid, tbUid->需要加锁的uid(当前实现为表锁)，如果无法获取锁则阻塞等待
 // 当前读，读取最新的数据，如果在dataItem层面已经失效，那么返回nil
 // 可能返回nil
 func (v *VmImpl) ReadForUpdate(xid, uid, tbUid int64) (Record, error) {

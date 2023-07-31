@@ -83,8 +83,8 @@ func (db *NtDB) Execute(xid int64, args []string) (int64, []*tableManager.Respon
 			if !ok {
 				return xid, nil, &ErrorInvalidEntity{}
 			}
-			er := db.storageEngine.Update(xid, upd)
-			return xid, nil, er
+			change, er := db.storageEngine.Update(xid, upd)
+			return xid, change, er
 		}
 	case INSERT:
 		{
@@ -92,8 +92,8 @@ func (db *NtDB) Execute(xid int64, args []string) (int64, []*tableManager.Respon
 			if !ok {
 				return xid, nil, &ErrorInvalidEntity{}
 			}
-			er := db.storageEngine.Insert(xid, ins)
-			return xid, nil, er
+			change, er := db.storageEngine.Insert(xid, ins)
+			return xid, change, er
 		}
 	case DELETE:
 		{
@@ -101,8 +101,8 @@ func (db *NtDB) Execute(xid int64, args []string) (int64, []*tableManager.Respon
 			if !ok {
 				return xid, nil, &ErrorInvalidEntity{}
 			}
-			er := db.storageEngine.Delete(xid, del)
-			return xid, nil, er
+			change, er := db.storageEngine.Delete(xid, del)
+			return xid, change, er
 		}
 	case CREATE:
 		{
