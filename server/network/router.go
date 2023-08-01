@@ -61,6 +61,7 @@ func (dbRouter *DbRouter) DoHandle(request iface.IRequest) {
 		} else if dbRouter.isQuitCommand(args) {
 			dbRouter.doQuit(request)
 		} else {
+			// 如果当前连接没有绑定一个事务，则先开启一个事务
 			if xid := request.GetConnection().GetConnectionProperty(TRANS); xid == nil || (xid).(int64) == -1 {
 				err = dbRouter.doBegin(true, request)
 			}
