@@ -27,7 +27,7 @@ type Connection struct {
 	// request
 	queryBuffer            []byte
 	queryLength            int
-	args                   []string
+	args                   []string // 请求的具体内容
 	bulkNum                int
 	bulkLength             int
 	isQueryProcessing      bool
@@ -68,6 +68,7 @@ func (c *Connection) startReader() {
 				conn:    c,
 				message: &Message{Id: DbRouterMsgId, args: c.args},
 			}
+			// 连接复位，准备读取下一次请求
 			c.canDoNextCommandHandle = false
 			c.isQueryProcessing = true
 			c.args = make([]string, 0)
